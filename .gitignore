@@ -1,2 +1,5 @@
 /target
 Cargo.lock
+
+# Output file whilst testing
+out.png
