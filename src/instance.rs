@@ -6,9 +6,8 @@ use image::RgbaImage;
 use crate::tree::Tree;
 
 /// A singleton for every editor, which holds data used by the rest of the library.
-#[derive(Debug)]
 pub struct Instance {
-    pub plugins: PlugVec<Plugin>,
+    effect_types: EffectTypeVec<EffectType>,
 
     pub instance: wgpu::Instance,
     pub adapter: wgpu::Adapter,
@@ -17,7 +16,7 @@ pub struct Instance {
 }
 
 impl Instance {
-    pub fn new(plugins: impl IntoIterator<Item = Plugin>) -> Self {
+    pub fn new() -> Self {
         let instance = wgpu::Instance::new(wgpu::Backends::all());
         let adapter =
             pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
@@ -26,7 +25,7 @@ impl Instance {
             pollster::block_on(adapter.request_device(&Default::default(), None)).unwrap();
 
         Self {
-            plugins: plugins.into_iter().collect(),
+            effect_types: EffectTypeVec::new(),
 
             instance,
             adapter,
@@ -35,7 +34,13 @@ impl Instance {
         }
     }
 
-    pub fn render_image(&mut self, image_tree: &Tree) -> image::RgbaImage {
+    /// Load a image effect from its WGSL source code, returning its [`EffectTypeId`].
+    pub fn load_wgsl_effect(&mut self, name: String, wgsl_source: String) -> EffectTypeId {
+        self.effect_types
+            .push(EffectType::new(name, wgsl_source, &self.device))
+    }
+
+    pub fn render_to_image(&mut self, image_tree: &Tree) -> image::RgbaImage {
         let u32_size = std::mem::size_of::<u32>() as u32;
         let img_dims = image_tree.dimensions();
 
@@ -169,11 +174,18 @@ impl Instance {
                 label: Some("FX chain"),
             });
         for effect in &image_tree.effects {
-            effect.add_pass(&self, &mut encoder, tex_in, tex_out, layer_texture_size);
+            self.effect_types[effect.id].add_pass(
+                &self,
+                &mut encoder,
+                tex_in,
+                tex_out,
+                layer_texture_size,
+            );
             // Swap the textures so that this layer's output becomes the next layer's input
             std::mem::swap(&mut tex_in, &mut tex_out);
         }
-        assert!(std::ptr::eq(tex_out, output_texture));
+        // `output_texture` would be the input to a hypothetical next effect
+        assert!(std::ptr::eq(tex_in, output_texture));
         // Run the FX chain on the GPU
         self.queue.submit(std::iter::once(encoder.finish()));
     }
@@ -187,14 +199,102 @@ impl Instance {
     }
 }
 
-/// A runtime-loaded image effect plugin.  This specifies a 'class' of image effects with different
-/// parameters.  Any number of instances of the resulting `Plugin` can then be instantiated into
-/// the image trees.
-#[derive(Debug, Clone)]
-pub struct Plugin {
-    pub name: String,
-    pub wgsl_source: String,
+/// A runtime-loaded image effect.  This specifies a 'class' of image effects with different
+/// parameters.  Any number of instances of the resulting `EffectType` can then be instantiated
+/// into the image trees.
+pub struct EffectType {
+    name: String,
+    render_pipeline: wgpu::RenderPipeline,
 }
 
-index_vec::define_index_type! { pub struct PlugIdx = usize; }
-pub type PlugVec<T> = index_vec::IndexVec<PlugIdx, T>;
+impl EffectType {
+    /// Load a new [`EffectType`] given a name and shader source.  The vertex and fragment
+    /// shaders are expected to be named `vs_main` and `fs_main`, respectively.
+    pub fn new(name: String, wgsl_source: String, device: &wgpu::Device) -> Self {
+        // Load the WGSL shader code we've been given
+        let shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+            label: Some(&name),
+            source: wgpu::ShaderSource::Wgsl(wgsl_source.into()),
+        });
+        let render_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some(&format!("{} render layout", name)),
+                // TODO: Add FX args here?
+                bind_group_layouts: &[],
+                push_constant_ranges: &[],
+            });
+        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(&format!("{} render pipeline", name)),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: "vs_main", // TODO: Make this configurable?
+                buffers: &[],           // TODO: Add FX args here
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: "fs_main", // TODO: Make this configurable?
+                // Write to all channels of an RGBA texture
+                targets: &[wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                }],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw, // 'front' is defined as anticlockwise verts
+                cull_mode: Some(wgpu::Face::Back), // Cull 'back' faces
+                polygon_mode: wgpu::PolygonMode::Fill,
+                // We don't need these, and both require GPU features.  Therefore, we just disable
+                // them to reduce the limits on the GPUs we can use.
+                clamp_depth: false,
+                conservative: false,
+            },
+            depth_stencil: None, // Don't use depth or stencil buffer
+            multisample: wgpu::MultisampleState::default(), // Also don't use multi-sampling
+        });
+        Self {
+            name,
+            render_pipeline,
+        }
+    }
+
+    /// Creates a render/compute pass which applies `self` to `tex_in`, placing the result in
+    /// `tex_out`
+    pub fn add_pass(
+        &self,
+        instance: &Instance,
+        encoder: &mut wgpu::CommandEncoder,
+        tex_in: &wgpu::Texture,
+        tex_out: &wgpu::Texture,
+        tex_size: wgpu::Extent3d,
+    ) {
+        let label = format!("{} render pass", self.name);
+        let render_pass_desc = wgpu::RenderPassDescriptor {
+            label: Some(&label),
+            color_attachments: &[wgpu::RenderPassColorAttachment {
+                // Write to the whole texture
+                view: &tex_out.create_view(&wgpu::TextureViewDescriptor::default()),
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 0.1,
+                        g: 0.2,
+                        b: 0.3,
+                        a: 1.0,
+                    }),
+                    store: true, // duh.  Why would we not want to keep what we're rendering?
+                },
+            }],
+            depth_stencil_attachment: None, // Not using depth or stencil
+        };
+        let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
+        render_pass.set_pipeline(&self.render_pipeline);
+        render_pass.draw(0..3, 0..1); // First 3 vertices, first (and only instance)
+    }
+}
+
+index_vec::define_index_type! { pub struct EffectTypeId = usize; }
+pub type EffectTypeVec<T> = index_vec::IndexVec<EffectTypeId, T>;

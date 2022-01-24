@@ -1,4 +1,4 @@
-// Vertex shader
+// Shader which draws a brown triangle in the middle of whatever texture is given
 
 struct VertexOutput {
     [[builtin(position)]] clip_position: vec4<f32>;
@@ -15,9 +15,7 @@ fn vs_main(
     return out;
 }
 
-// Fragment shader
-
 [[stage(fragment)]]
-fn fs_main(_in: VertexOutput) -> [[location(0)]] vec4<f32> {
+fn fs_main(in: VertexOutput) -> [[location(0)]] vec4<f32> {
     return vec4<f32>(0.3, 0.2, 0.1, 1.0);
 }
