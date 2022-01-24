@@ -16,9 +16,9 @@ fn main() {
 
     // Load an image
     let image = Tree {
-        effects: vec![/* Effect {
+        effects: vec![Effect {
             plugin_idx: PlugIdx::new(0),
-        } */],
+        }],
         layer: Layer::from_file("img/mc-skin.png").unwrap(),
     };
 

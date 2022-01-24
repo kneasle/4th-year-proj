@@ -4,7 +4,7 @@ use std::{
     path::Path,
 };
 
-use crate::instance::PlugIdx;
+use crate::instance::{Instance, PlugIdx};
 use cgmath::Vector2;
 use image::{DynamicImage, ImageError};
 
@@ -28,6 +28,36 @@ impl Tree {
 pub struct Effect {
     /// The [`EffectPlugin`] of which this is an instance
     pub plugin_idx: PlugIdx,
+}
+
+impl Effect {
+    /// Creates a render/compute pass which applies `self` to `tex_in`, placing the result in
+    /// `tex_out`
+    pub fn add_pass(
+        &self,
+        instance: &Instance,
+        encoder: &mut wgpu::CommandEncoder,
+        tex_in: &wgpu::Texture,
+        tex_out: &wgpu::Texture,
+        tex_size: wgpu::Extent3d,
+    ) {
+        // TODO: Actually run the effect
+        encoder.copy_texture_to_texture(
+            wgpu::ImageCopyTexture {
+                texture: tex_in,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::ImageCopyTexture {
+                texture: tex_out,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            tex_size,
+        );
+    }
 }
 
 /// A source image which forms the leaves of the image tree.

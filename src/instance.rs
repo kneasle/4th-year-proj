@@ -113,8 +113,14 @@ impl Instance {
         output_texture: &wgpu::Texture,
         dimensions: Vector2<u32>,
     ) {
-        // Load the base layer texture to the GPU
+        /* We render effect chains by alternating between two textures (the output texture and the
+         * texture's source texture).  This way, each effect never writes to its own input, but we
+         * only need two textures for the whole chain. */
+
         let layer_dims = Vector2::from(image_tree.layer.image.dimensions());
+        assert_eq!(dimensions, layer_dims); // TODO: Handle layer sizes differently later
+
+        // Create a new texture for the source image
         let layer_texture_size = wgpu::Extent3d {
             width: layer_dims.x,
             height: layer_dims.y,
@@ -131,9 +137,18 @@ impl Instance {
                 | wgpu::TextureUsages::COPY_DST
                 | wgpu::TextureUsages::TEXTURE_BINDING,
         });
+
+        // Copy the source texture to the first texture in the chain.  Since textures alternate
+        // between Effects, we write to `layer_texture` for odd numbers of FX and `output_texture`
+        // for even numbers of FX.
+        let (mut tex_in, mut tex_out) = if image_tree.effects.len() % 2 == 0 {
+            (output_texture, &layer_texture)
+        } else {
+            (&layer_texture, output_texture)
+        };
         self.queue.write_texture(
             wgpu::ImageCopyTexture {
-                texture: &layer_texture,
+                texture: tex_in,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
@@ -153,35 +168,22 @@ impl Instance {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("FX chain"),
             });
-        if image_tree.effects.is_empty() {
-            // If the FX stack is empty, then copy the layer texture directly to the output texture
-            assert_eq!(dimensions, layer_dims);
-            encoder.copy_texture_to_texture(
-                wgpu::ImageCopyTexture {
-                    texture: &layer_texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::ImageCopyTexture {
-                    texture: output_texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                layer_texture_size,
-            );
-        } else {
-            todo!("Image effects not implemented yet");
+        for effect in &image_tree.effects {
+            effect.add_pass(&self, &mut encoder, tex_in, tex_out, layer_texture_size);
+            // Swap the textures so that this layer's output becomes the next layer's input
+            std::mem::swap(&mut tex_in, &mut tex_out);
         }
+        assert!(std::ptr::eq(tex_out, output_texture));
         // Run the FX chain on the GPU
         self.queue.submit(std::iter::once(encoder.finish()));
     }
 
+    /// The [`TextureUsages`](wgpu::TextureUsages) needed for the texture into which the final
+    /// composite image is rendered.
     pub fn target_texture_usages() -> wgpu::TextureUsages {
         wgpu::TextureUsages::COPY_SRC
-            | wgpu::TextureUsages::RENDER_ATTACHMENT
             | wgpu::TextureUsages::COPY_DST
+            | wgpu::TextureUsages::RENDER_ATTACHMENT
     }
 }
 
