@@ -2,9 +2,9 @@ use std::{
     fmt::{Debug, Formatter},
     ops::{Deref, DerefMut},
     path::Path,
+    rc::Rc,
 };
 
-use crate::context::EffectTypeId;
 use cgmath::Vector2;
 use image::{DynamicImage, ImageError};
 
@@ -14,7 +14,7 @@ pub struct Tree {
     /// The stack of [`Effect`]s, in the order that they are applied
     pub effects: Vec<Effect>,
     /// The base image to which the [`Effect`]s are applied
-    pub layer: Layer,
+    pub layer: Rc<Layer>,
 }
 
 impl Tree {
@@ -27,7 +27,7 @@ impl Tree {
 #[derive(Debug, Clone)]
 pub struct Effect {
     /// The ID of the [`EffectType`] of which this is an instance
-    pub id: EffectTypeId,
+    pub id: String,
 }
 
 /// A source image which forms the leaves of the image tree.

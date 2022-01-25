@@ -26,7 +26,7 @@ var t_diffuse: texture_2d<f32>;
 var s_diffuse: sampler;
 
 fn modify_color(col: vec4<f32>) -> vec4<f32> {
-    return vec4<f32>(vec3<f32>(1.0) - col.rgb, col.a); // TODO: Make this respect luminosity
+    return vec4<f32>(vec3<f32>(1.0) - col.rgb, col.a);
 }
 
 [[stage(fragment)]]

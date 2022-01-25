@@ -1,3 +1,5 @@
+use std::{rc::Rc, time::Instant};
+
 use image_ed::{
     context::Context,
     tree::{Effect, Layer, Tree},
@@ -8,23 +10,25 @@ fn main() {
     env_logger::init();
 
     // Create the singleton `Context`, and load an example image effect
-    let mut context = Context::new();
-    let invert_id = context.load_wgsl_effect(
-        "Invert".to_owned(),
-        include_str!("../shader/invert.wgsl").to_owned(),
-    );
-
+    println!("Loading FX");
+    let mut context = Context::with_default_effects();
     // Load an image, taking the path as the first arg if provided
+    println!("Loading file");
     let file_path = std::env::args()
         .skip(1) // First arg is path to this executable
         .next()
         .unwrap_or_else(|| "img/mc-skin.png".to_owned());
     let image = Tree {
-        effects: vec![Effect { id: invert_id }],
-        layer: Layer::from_file(&file_path).unwrap(),
+        effects: vec![Effect {
+            id: Context::ID_VALUE_INVERT.to_owned(),
+        }],
+        layer: Rc::new(Layer::from_file(&file_path).unwrap()),
     };
-
     // Create output textures for the image
+    println!("Processing image");
+    let start = Instant::now();
     let rgb_image = context.render_to_image(&image);
+    println!("Processed in {:?}", Instant::now() - start);
+    println!("Saving image");
     rgb_image.save("out.png").unwrap();
 }

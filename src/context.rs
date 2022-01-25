@@ -1,4 +1,4 @@
-use std::num::NonZeroU32;
+use std::{collections::HashMap, num::NonZeroU32};
 
 use cgmath::Vector2;
 use image::RgbaImage;
@@ -9,9 +9,10 @@ use crate::tree::Tree;
 /// Persistent state used for processing images.  Only one `Context` is required per instance of
 /// the image editor.
 pub struct Context {
-    effect_types: EffectTypeVec<EffectType>,
+    /* Loaded effect classes */
+    effect_types: HashMap<String, EffectType>,
 
-    // wgpu essentials
+    /* wgpu essentials */
     instance: wgpu::Instance,
     adapter: wgpu::Adapter,
     device: wgpu::Device,
@@ -23,6 +24,8 @@ pub struct Context {
 }
 
 impl Context {
+    pub const ID_VALUE_INVERT: &'static str = "value-invert";
+
     pub fn new() -> Self {
         let instance = wgpu::Instance::new(wgpu::Backends::all());
         let adapter =
@@ -38,7 +41,7 @@ impl Context {
         });
 
         Self {
-            effect_types: EffectTypeVec::new(),
+            effect_types: HashMap::new(),
 
             instance,
             adapter,
@@ -49,10 +52,23 @@ impl Context {
         }
     }
 
+    pub fn with_default_effects() -> Self {
+        let mut ctx = Self::new();
+        ctx.load_wgsl_effect(
+            Self::ID_VALUE_INVERT,
+            "Value Invert",
+            include_str!("../shader/invert.wgsl"),
+        );
+        ctx
+    }
+
     /// Load a image effect from its WGSL source code, returning its [`EffectTypeId`].
-    pub fn load_wgsl_effect(&mut self, name: String, wgsl_source: String) -> EffectTypeId {
-        self.effect_types
-            .push(EffectType::new(name, wgsl_source, &self.device))
+    pub fn load_wgsl_effect(&mut self, id: &str, name: &str, wgsl_source: &str) {
+        let old_fx = self.effect_types.insert(
+            id.to_owned(),
+            EffectType::from_wgsl_source(name, wgsl_source, &self.device),
+        );
+        assert!(old_fx.is_none(), "shouldn't set the same effect ID twice");
     }
 
     pub fn render_to_image(&mut self, image_tree: &Tree) -> image::RgbaImage {
@@ -192,7 +208,7 @@ impl Context {
                 label: Some("FX chain"),
             });
         for effect in &image_tree.effects {
-            self.effect_types[effect.id].add_pass(&self, &mut encoder, tex_in, tex_out);
+            self.effect_types[&effect.id].add_pass(&self, &mut encoder, tex_in, tex_out);
             // Swap the textures so that this layer's output becomes the next layer's input
             std::mem::swap(&mut tex_in, &mut tex_out);
         }
@@ -224,7 +240,7 @@ pub struct EffectType {
 impl EffectType {
     /// Load a new [`EffectType`] given a name and shader source.  The vertex and fragment
     /// shaders are expected to be named `vs_main` and `fs_main`, respectively.
-    pub fn new(name: String, wgsl_source: String, device: &wgpu::Device) -> Self {
+    pub fn from_wgsl_source(name: &str, wgsl_source: &str, device: &wgpu::Device) -> Self {
         // Load the WGSL shader code we've been given
         let shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
             label: Some(&name),
@@ -300,7 +316,7 @@ impl EffectType {
             multisample: wgpu::MultisampleState::default(), // Also don't use multi-sampling
         });
         Self {
-            name,
+            name: name.to_owned(),
             render_pipeline,
             bind_group_layout,
         }
@@ -412,6 +428,3 @@ impl Vertex {
         }
     }
 }
-
-index_vec::define_index_type! { pub struct EffectTypeId = usize; }
-pub type EffectTypeVec<T> = index_vec::IndexVec<EffectTypeId, T>;
