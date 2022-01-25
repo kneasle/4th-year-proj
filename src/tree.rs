@@ -4,7 +4,7 @@ use std::{
     path::Path,
 };
 
-use crate::instance::EffectTypeId;
+use crate::context::EffectTypeId;
 use cgmath::Vector2;
 use image::{DynamicImage, ImageError};
 

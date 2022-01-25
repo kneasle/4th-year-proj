@@ -5,17 +5,18 @@ use image::RgbaImage;
 
 use crate::tree::Tree;
 
-/// A singleton for every editor, which holds data used by the rest of the library.
-pub struct Instance {
+/// Persistent state used for processing images.  Only one `Context` is required per instance of
+/// the image editor.
+pub struct Context {
     effect_types: EffectTypeVec<EffectType>,
 
-    pub instance: wgpu::Instance,
-    pub adapter: wgpu::Adapter,
-    pub device: wgpu::Device,
-    pub queue: wgpu::Queue,
+    instance: wgpu::Instance,
+    adapter: wgpu::Adapter,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
 }
 
-impl Instance {
+impl Context {
     pub fn new() -> Self {
         let instance = wgpu::Instance::new(wgpu::Backends::all());
         let adapter =
@@ -265,7 +266,7 @@ impl EffectType {
     /// `tex_out`
     pub fn add_pass(
         &self,
-        instance: &Instance,
+        context: &Context,
         encoder: &mut wgpu::CommandEncoder,
         tex_in: &wgpu::Texture,
         tex_out: &wgpu::Texture,
@@ -292,7 +293,7 @@ impl EffectType {
         };
         let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
         render_pass.set_pipeline(&self.render_pipeline);
-        render_pass.draw(0..3, 0..1); // First 3 vertices, first (and only instance)
+        render_pass.draw(0..3, 0..1); // First 3 vertices, first (and only) instance
     }
 }
 

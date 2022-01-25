@@ -1,14 +1,14 @@
 use image_ed::{
-    instance::Instance,
+    context::Context,
     tree::{Effect, Layer, Tree},
 };
 
 fn main() {
     env_logger::init();
 
-    // Spawn a new Instance
-    let mut instance = Instance::new();
-    let invert_id = instance.load_wgsl_effect(
+    // Create the singleton `Context`, and load an example image effect
+    let mut context = Context::new();
+    let invert_id = context.load_wgsl_effect(
         "Invert".to_owned(),
         include_str!("../shader/invert.wgsl").to_owned(),
     );
@@ -20,6 +20,6 @@ fn main() {
     };
 
     // Create output textures for the image
-    let rgb_image = instance.render_to_image(&image);
+    let rgb_image = context.render_to_image(&image);
     rgb_image.save("out.png").unwrap();
 }
