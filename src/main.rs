@@ -4,6 +4,7 @@ use image_ed::{
 };
 
 fn main() {
+    // Init logging
     env_logger::init();
 
     // Create the singleton `Context`, and load an example image effect
@@ -13,10 +14,14 @@ fn main() {
         include_str!("../shader/invert.wgsl").to_owned(),
     );
 
-    // Load an image
+    // Load an image, taking the path as the first arg if provided
+    let file_path = std::env::args()
+        .skip(1) // First arg is path to this executable
+        .next()
+        .unwrap_or_else(|| "img/mc-skin.png".to_owned());
     let image = Tree {
         effects: vec![Effect { id: invert_id }],
-        layer: Layer::from_file("img/mc-skin.png").unwrap(),
+        layer: Layer::from_file(&file_path).unwrap(),
     };
 
     // Create output textures for the image

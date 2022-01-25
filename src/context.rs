@@ -155,7 +155,10 @@ impl Context {
             format: wgpu::TextureFormat::Rgba8UnormSrgb,
             usage: wgpu::TextureUsages::COPY_SRC
                 | wgpu::TextureUsages::COPY_DST
-                | wgpu::TextureUsages::TEXTURE_BINDING,
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                  // TODO: Ideally, we would never overwrite the source textures, since we're very
+                  // likely to want to use it as a cache
+                | wgpu::TextureUsages::RENDER_ATTACHMENT,
         });
 
         // Copy the source texture to the first texture in the chain.  Since textures alternate
@@ -205,6 +208,7 @@ impl Context {
         wgpu::TextureUsages::COPY_SRC
             | wgpu::TextureUsages::COPY_DST
             | wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING
     }
 }
 
@@ -236,7 +240,8 @@ impl EffectType {
                     ty: wgpu::BindingType::Texture {
                         // TODO: We potentially don't need to do a ton of u8 -> f32 -> u8
                         // conversions.  I'm not sure if they actually slow things down; they're so
-                        // widespread in games that GPUs probably have custom hardware for it.
+                        // widespread in games that GPUs almost certainly have custom hardware for
+                        // it.
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
                         view_dimension: wgpu::TextureViewDimension::D2,
                         multisampled: false,
