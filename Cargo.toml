@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 cgmath = "0.18"
+bytemuck = { version = "1.7", features = ["derive"] }
 env_logger = "0.9"
 image = "0.23"
 index_vec = "0.1"

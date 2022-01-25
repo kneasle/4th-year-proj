@@ -2,6 +2,7 @@ use std::num::NonZeroU32;
 
 use cgmath::Vector2;
 use image::RgbaImage;
+use wgpu::util::DeviceExt;
 
 use crate::tree::Tree;
 
@@ -10,10 +11,15 @@ use crate::tree::Tree;
 pub struct Context {
     effect_types: EffectTypeVec<EffectType>,
 
+    // wgpu essentials
     instance: wgpu::Instance,
     adapter: wgpu::Adapter,
     device: wgpu::Device,
     queue: wgpu::Queue,
+
+    /* shared wgpu resources */
+    /// A buffer containing vertices with position2/uv data
+    quad_buffer: wgpu::Buffer,
 }
 
 impl Context {
@@ -25,6 +31,12 @@ impl Context {
         let (device, queue) =
             pollster::block_on(adapter.request_device(&Default::default(), None)).unwrap();
 
+        let quad_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Quad vertex buffer"),
+            contents: bytemuck::cast_slice(&QUAD_VERTICES),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
         Self {
             effect_types: EffectTypeVec::new(),
 
@@ -32,6 +44,8 @@ impl Context {
             adapter,
             device,
             queue,
+
+            quad_buffer,
         }
     }
 
@@ -175,13 +189,7 @@ impl Context {
                 label: Some("FX chain"),
             });
         for effect in &image_tree.effects {
-            self.effect_types[effect.id].add_pass(
-                &self,
-                &mut encoder,
-                tex_in,
-                tex_out,
-                layer_texture_size,
-            );
+            self.effect_types[effect.id].add_pass(&self, &mut encoder, tex_in, tex_out);
             // Swap the textures so that this layer's output becomes the next layer's input
             std::mem::swap(&mut tex_in, &mut tex_out);
         }
@@ -206,6 +214,7 @@ impl Context {
 pub struct EffectType {
     name: String,
     render_pipeline: wgpu::RenderPipeline,
+    bind_group_layout: wgpu::BindGroupLayout,
 }
 
 impl EffectType {
@@ -217,11 +226,40 @@ impl EffectType {
             label: Some(&name),
             source: wgpu::ShaderSource::Wgsl(wgsl_source.into()),
         });
+        // Create a bind group for the new texture
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some(&format!("{} bind group layout", name)),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        // TODO: We potentially don't need to do a ton of u8 -> f32 -> u8
+                        // conversions.  I'm not sure if they actually slow things down; they're so
+                        // widespread in games that GPUs probably have custom hardware for it.
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None, // We're not using texture arrays (yet?)
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler {
+                        filtering: true,
+                        comparison: false, // TODO: Should we change this?
+                    },
+                    count: None, // No texture arrays (yet?)
+                },
+            ],
+        });
+        // Create the render pipeline
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some(&format!("{} render layout", name)),
                 // TODO: Add FX args here?
-                bind_group_layouts: &[],
+                bind_group_layouts: &[&bind_group_layout],
                 push_constant_ranges: &[],
             });
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -229,8 +267,8 @@ impl EffectType {
             layout: Some(&render_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: "vs_main", // TODO: Make this configurable?
-                buffers: &[],           // TODO: Add FX args here
+                entry_point: "vs_main",       // TODO: Make this configurable?
+                buffers: &[Vertex::layout()], // TODO: Add FX args here
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
@@ -243,7 +281,7 @@ impl EffectType {
                 }],
             }),
             primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw, // 'front' is defined as anticlockwise verts
                 cull_mode: Some(wgpu::Face::Back), // Cull 'back' faces
@@ -259,6 +297,7 @@ impl EffectType {
         Self {
             name,
             render_pipeline,
+            bind_group_layout,
         }
     }
 
@@ -270,11 +309,40 @@ impl EffectType {
         encoder: &mut wgpu::CommandEncoder,
         tex_in: &wgpu::Texture,
         tex_out: &wgpu::Texture,
-        tex_size: wgpu::Extent3d,
     ) {
+        // Create a sampler & bind group for the input texture
+        let tex_in_view = tex_in.create_view(&wgpu::TextureViewDescriptor::default());
+        let tex_in_sampler = context.device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some(&format!("{} input sampler", self.name)),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Nearest, // Note: Interpolation method for layer stacking
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+        let tex_in_bind_group = context
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(&format!("{} bind group", self.name)),
+                layout: &self.bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&tex_in_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&tex_in_sampler),
+                    },
+                ],
+            });
+        // Create the render pass
         let label = format!("{} render pass", self.name);
         let render_pass_desc = wgpu::RenderPassDescriptor {
             label: Some(&label),
+            // This `RenderPassColorAttachment` is targeted by `[[location(0)]]` in the WGSL shader
             color_attachments: &[wgpu::RenderPassColorAttachment {
                 // Write to the whole texture
                 view: &tex_out.create_view(&wgpu::TextureViewDescriptor::default()),
@@ -293,7 +361,50 @@ impl EffectType {
         };
         let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
         render_pass.set_pipeline(&self.render_pipeline);
-        render_pass.draw(0..3, 0..1); // First 3 vertices, first (and only) instance
+        render_pass.set_vertex_buffer(0, context.quad_buffer.slice(..));
+        render_pass.set_bind_group(0, &tex_in_bind_group, &[]); // Bind the input textures
+        render_pass.draw(0..QUAD_VERTICES.len() as u32, 0..1); // Only use one instance
+    }
+}
+
+/// The vertices to describe a single quad which maps one set of texture coordinates to the entire
+/// screen.
+// NOTE: The v-coordinates are inverted because wgpu uses y-up for world-space coordinates, but
+// y-down for textures.
+#[rustfmt::skip]
+const QUAD_VERTICES: [Vertex; 4] = [
+    Vertex { position: [-1.0, -1.0], uv: [0.0, 1.0], },
+    Vertex { position: [ 1.0, -1.0], uv: [1.0, 1.0], },
+    Vertex { position: [-1.0,  1.0], uv: [0.0, 0.0], },
+    Vertex { position: [ 1.0,  1.0], uv: [1.0, 0.0], },
+];
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct Vertex {
+    position: [f32; 2], // z coordinates set to 0 by the vertex shader
+    uv: [f32; 2],
+}
+
+impl Vertex {
+    fn layout<'a>() -> wgpu::VertexBufferLayout<'a> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            // TODO: Replace this with a `const` call to `wgpu::vertex_attr_array!`?
+            attributes: &[
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x2,
+                    offset: 0,
+                    shader_location: 0, // TODO: Is this what [[location(0)]] does?
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x2,
+                    offset: std::mem::size_of::<[f32; 2]>() as wgpu::BufferAddress,
+                    shader_location: 1,
+                },
+            ],
+        }
     }
 }
 
