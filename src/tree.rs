@@ -39,11 +39,24 @@ pub struct Layer {
 impl Layer {
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self, ImageError> {
         let dyn_image = image::io::Reader::open(path)?.decode()?;
+        let rgba_image = match dyn_image {
+            DynamicImage::ImageRgba8(i) => i,
+            DynamicImage::ImageRgb8(rgb_img) => {
+                // Copy the RGB image into an RGBA image with the same colours but full opacity
+                // PERF: This would be more performant if we modify the buffers directly
+                let mut new_img = image::RgbaImage::new(rgb_img.width(), rgb_img.height());
+                for y in 0..rgb_img.height() {
+                    for x in 0..rgb_img.width() {
+                        let image::Rgb([r, g, b]) = *rgb_img.get_pixel(x, y);
+                        new_img.put_pixel(x, y, image::Rgba([r, g, b, u8::MAX]))
+                    }
+                }
+                new_img
+            }
+            _ => panic!("Please load an RGBA8 or RGB8 file."),
+        };
         Ok(Self {
-            image: match dyn_image {
-                DynamicImage::ImageRgba8(i) => DebuggableImage(i),
-                _ => panic!("Please load an RGBA8 file."),
-            },
+            image: DebuggableImage(rgba_image),
         })
     }
 }
