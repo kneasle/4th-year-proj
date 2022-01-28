@@ -8,6 +8,7 @@ cgmath = "0.18"
 bytemuck = { version = "1.7", features = ["derive"] }
 env_logger = "0.9"
 image = "0.23"
+index_vec = "0.1"
 log = "0.4"
 pollster = "0.2"
 wgpu = "0.11"

@@ -1,8 +1,8 @@
-use std::{rc::Rc, time::Instant};
+use std::time::Instant;
 
 use image_ed::{
     context::Context,
-    tree::{Effect, Layer, Tree},
+    tree::{Effect, Tree},
 };
 
 fn main() {
@@ -11,18 +11,20 @@ fn main() {
 
     // Create the singleton `Context`, and load an example image effect
     println!("Loading FX");
-    let mut context = Context::with_default_effects();
+    let mut context = Context::with_builtin_effects();
     // Load an image, taking the path as the first arg if provided
     println!("Loading file");
     let file_path = std::env::args()
-        .skip(1) // First arg is path to this executable
-        .next()
+        .nth(1) // 0th arg is path to this executable
         .unwrap_or_else(|| "img/mc-skin.png".to_owned());
     let image = Tree {
-        effects: vec![Effect {
-            id: Context::ID_VALUE_INVERT.to_owned(),
-        }],
-        layer: Rc::new(Layer::from_file(&file_path).unwrap()),
+        effects: vec![
+            Effect {
+                id: Context::ID_VALUE_INVERT.to_owned(),
+            };
+            2
+        ],
+        layer_id: context.load_layer_from_file(&file_path).unwrap(),
     };
     // Create output textures for the image
     println!("Processing image");
