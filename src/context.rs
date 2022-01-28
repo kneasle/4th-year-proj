@@ -19,13 +19,15 @@ pub struct Context {
     queue: wgpu::Queue,
 
     /* shared wgpu resources */
-    /// A buffer containing vertices with position2/uv data
+    /// A buffer containing vertices for a single quad with position2/uv data.  Rendering a texture
+    /// to this mesh fills the screen completely
     quad_buffer: wgpu::Buffer,
 }
 
 impl Context {
     pub const ID_VALUE_INVERT: &'static str = "value-invert";
 
+    /// Creates a new `Context` with handles to GPU resources but no loaded [`EffectType`]s.
     pub fn new() -> Self {
         let instance = wgpu::Instance::new(wgpu::Backends::all());
         let adapter =
@@ -70,7 +72,112 @@ impl Context {
         );
         assert!(old_fx.is_none(), "shouldn't set the same effect ID twice");
     }
+}
 
+///////////////////
+// IMAGE EFFECTS //
+///////////////////
+
+/// A runtime-loaded image effect.  This specifies a 'class' of image effects with different
+/// parameters.  Any number of instances of the resulting `EffectType` can then be instantiated
+/// into the image trees.
+pub struct EffectType {
+    name: String,
+    render_pipeline: wgpu::RenderPipeline,
+    bind_group_layout: wgpu::BindGroupLayout,
+}
+
+impl EffectType {
+    /// Load a new [`EffectType`] given a name and shader source.  The vertex and fragment
+    /// shaders are expected to be named `vs_main` and `fs_main`, respectively.
+    pub fn from_wgsl_source(name: &str, wgsl_source: &str, device: &wgpu::Device) -> Self {
+        // Load the WGSL shader code we've been given
+        let shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+            label: Some(&name),
+            source: wgpu::ShaderSource::Wgsl(wgsl_source.into()),
+        });
+        // Create a bind group for the texture that we'll be modifying
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some(&format!("{} bind group layout", name)),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        // TODO: We potentially don't need to do a ton of u8 -> f32 -> u8
+                        // conversions.  I'm not sure if they actually slow things down; they're so
+                        // widespread in games that GPUs almost certainly have custom hardware for
+                        // it.
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None, // We're not using texture arrays (yet?)
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler {
+                        filtering: true,
+                        comparison: false, // TODO: Should we change this?
+                    },
+                    count: None, // No texture arrays (yet?)
+                },
+            ],
+        });
+        // Create the render pipeline
+        let render_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some(&format!("{} render layout", name)),
+                // TODO: Add FX args here?
+                bind_group_layouts: &[&bind_group_layout],
+                push_constant_ranges: &[],
+            });
+        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(&format!("{} render pipeline", name)),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: "vs_main",       // TODO: Make this configurable?
+                buffers: &[Vertex::layout()], // TODO: Add FX args here
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: "fs_main", // TODO: Make this configurable?
+                // Write to all channels of an RGBA texture
+                targets: &[wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                }],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw, // 'front' is defined as anticlockwise verts
+                cull_mode: Some(wgpu::Face::Back), // Cull 'back' faces
+                polygon_mode: wgpu::PolygonMode::Fill,
+                // We don't need these, and both require GPU features.  Therefore, we just disable
+                // them to reduce the limits on the GPUs we can use.
+                clamp_depth: false,
+                conservative: false,
+            },
+            depth_stencil: None, // Don't use depth or stencil buffer
+            multisample: wgpu::MultisampleState::default(), // Also don't use multi-sampling
+        });
+        Self {
+            name: name.to_owned(),
+            render_pipeline,
+            bind_group_layout,
+        }
+    }
+}
+
+////////////////////////////////
+// IMAGE PROCESSING/RENDERING //
+////////////////////////////////
+
+impl Context {
     pub fn render_to_image(&mut self, image_tree: &Tree) -> image::RgbaImage {
         let u32_size = std::mem::size_of::<u32>() as u32;
         let img_dims = image_tree.dimensions();
@@ -228,103 +335,10 @@ impl Context {
     }
 }
 
-/// A runtime-loaded image effect.  This specifies a 'class' of image effects with different
-/// parameters.  Any number of instances of the resulting `EffectType` can then be instantiated
-/// into the image trees.
-pub struct EffectType {
-    name: String,
-    render_pipeline: wgpu::RenderPipeline,
-    bind_group_layout: wgpu::BindGroupLayout,
-}
-
 impl EffectType {
-    /// Load a new [`EffectType`] given a name and shader source.  The vertex and fragment
-    /// shaders are expected to be named `vs_main` and `fs_main`, respectively.
-    pub fn from_wgsl_source(name: &str, wgsl_source: &str, device: &wgpu::Device) -> Self {
-        // Load the WGSL shader code we've been given
-        let shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
-            label: Some(&name),
-            source: wgpu::ShaderSource::Wgsl(wgsl_source.into()),
-        });
-        // Create a bind group for the new texture
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some(&format!("{} bind group layout", name)),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        // TODO: We potentially don't need to do a ton of u8 -> f32 -> u8
-                        // conversions.  I'm not sure if they actually slow things down; they're so
-                        // widespread in games that GPUs almost certainly have custom hardware for
-                        // it.
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None, // We're not using texture arrays (yet?)
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler {
-                        filtering: true,
-                        comparison: false, // TODO: Should we change this?
-                    },
-                    count: None, // No texture arrays (yet?)
-                },
-            ],
-        });
-        // Create the render pipeline
-        let render_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some(&format!("{} render layout", name)),
-                // TODO: Add FX args here?
-                bind_group_layouts: &[&bind_group_layout],
-                push_constant_ranges: &[],
-            });
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some(&format!("{} render pipeline", name)),
-            layout: Some(&render_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: "vs_main",       // TODO: Make this configurable?
-                buffers: &[Vertex::layout()], // TODO: Add FX args here
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: "fs_main", // TODO: Make this configurable?
-                // Write to all channels of an RGBA texture
-                targets: &[wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                }],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleStrip,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw, // 'front' is defined as anticlockwise verts
-                cull_mode: Some(wgpu::Face::Back), // Cull 'back' faces
-                polygon_mode: wgpu::PolygonMode::Fill,
-                // We don't need these, and both require GPU features.  Therefore, we just disable
-                // them to reduce the limits on the GPUs we can use.
-                clamp_depth: false,
-                conservative: false,
-            },
-            depth_stencil: None, // Don't use depth or stencil buffer
-            multisample: wgpu::MultisampleState::default(), // Also don't use multi-sampling
-        });
-        Self {
-            name: name.to_owned(),
-            render_pipeline,
-            bind_group_layout,
-        }
-    }
-
     /// Creates a render/compute pass which applies `self` to `tex_in`, placing the result in
     /// `tex_out`
-    pub fn add_pass(
+    fn add_pass(
         &self,
         context: &Context,
         encoder: &mut wgpu::CommandEncoder,
@@ -391,7 +405,8 @@ impl EffectType {
 /// The vertices to describe a single quad which maps one set of texture coordinates to the entire
 /// screen.
 // NOTE: The v-coordinates are inverted because wgpu uses y-up for world-space coordinates, but
-// y-down for textures.
+// y-down for textures.  Note also that the positions are in clip coordinates - i.e. `(-1, -1)` is
+// the top-left corner and `(1, 1)` is the bottom-right.
 #[rustfmt::skip]
 const QUAD_VERTICES: [Vertex; 4] = [
     Vertex { position: [-1.0, -1.0], uv: [0.0, 1.0], },
