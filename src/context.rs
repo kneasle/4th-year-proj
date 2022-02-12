@@ -26,8 +26,7 @@ pub struct Context {
     /// A buffer containing vertices for a single quad with position2/uv data.  Rendering a texture
     /// to this mesh fills the screen completely
     quad_buffer: wgpu::Buffer,
-    // TODO: We should store the sizes along with the textures to catch sizing issues which are
-    // likely to arise later
+    output_texture: Option<SizedTexture>,
     layers: IndexVec<LayerId, SizedTexture>,
 }
 
@@ -58,6 +57,7 @@ impl Context {
             queue,
 
             quad_buffer,
+            output_texture: None,
             layers: IndexVec::new(),
         }
     }
@@ -268,14 +268,9 @@ impl Context {
         let pixel_size = std::mem::size_of::<u32>() as u32;
         let img_dims = image_tree.dimensions(self);
 
-        // Create texture to which the image tree will be rendered
-        let output_tex = self.create_swap_texture(wgpu::Extent3d {
-            width: img_dims.x,
-            height: img_dims.y,
-            depth_or_array_layers: 1,
-        });
-        // Render the image into the texture
-        self.render_to_texture(image_tree, &output_tex);
+        // Render the image into `self.output_texture` (resizing it if necessary)
+        self.render_to_texture(image_tree);
+        let output_texture = self.output_texture.as_ref().unwrap();
 
         // Create a buffer into which we can copy our texture
         let output_buffer_size = (pixel_size * img_dims.x * img_dims.y) as wgpu::BufferAddress;
@@ -293,7 +288,7 @@ impl Context {
         encoder.copy_texture_to_buffer(
             wgpu::ImageCopyTexture {
                 aspect: wgpu::TextureAspect::All,
-                texture: &output_tex,
+                texture: &output_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
             },
@@ -305,7 +300,7 @@ impl Context {
                     rows_per_image: NonZeroU32::new(img_dims.y),
                 },
             },
-            output_tex.size(),
+            output_texture.size(),
         );
         self.queue.submit(Some(encoder.finish()));
 
@@ -327,7 +322,7 @@ impl Context {
         RgbaImage::from_raw(img_dims.x, img_dims.y, buffer_data).unwrap()
     }
 
-    pub fn render_to_texture(&mut self, image_tree: &Tree, output_texture: &SizedTexture) {
+    pub fn render_to_texture(&mut self, image_tree: &Tree) {
         /* We render effect chains by alternating between two textures (one of which is
          * output_texture).  This way, each effect never writes to its own input, but we only need
          * two textures for the whole chain.  The first effect reads directly from the source
@@ -340,6 +335,22 @@ impl Context {
          *  3 effects: layer -[effect 0]-> output_texture -[effect 1]-> temp_texture
          *                                                -[effect 2]-> output_texture
          */
+
+        // If the output texture is too small (or non-existent), create a new one big enough to
+        // store the result of `image_tree`.
+        let img_dims = image_tree.dimensions(self);
+        let out_tex_needs_resize = match &self.output_texture {
+            Some(tex) => tex.width() < img_dims.x || tex.height() < img_dims.y,
+            None => true,
+        };
+        if out_tex_needs_resize {
+            self.output_texture = Some(self.create_swap_texture(wgpu::Extent3d {
+                width: img_dims.x,
+                height: img_dims.y,
+                depth_or_array_layers: 1,
+            }));
+        }
+        let output_texture = self.output_texture.as_ref().unwrap();
 
         let layer = &self.layers[image_tree.layer_id];
         assert_eq!(output_texture.size(), layer.size()); // TODO: Handle layer sizes differently later
