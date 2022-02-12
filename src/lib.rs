@@ -1,3 +1,3 @@
 pub mod context;
-pub mod tex;
+pub mod texture;
 pub mod tree;

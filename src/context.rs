@@ -6,7 +6,7 @@ use index_vec::IndexVec;
 use wgpu::util::DeviceExt;
 
 use crate::{
-    tex::SizedTexture,
+    texture::SizedTexture,
     tree::{Effect, Tree},
 };
 
