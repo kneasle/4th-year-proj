@@ -288,7 +288,7 @@ impl Context {
         encoder.copy_texture_to_buffer(
             wgpu::ImageCopyTexture {
                 aspect: wgpu::TextureAspect::All,
-                texture: &output_texture,
+                texture: output_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
             },

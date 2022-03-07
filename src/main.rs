@@ -16,7 +16,7 @@ fn main() {
     println!("Loading file");
     let file_path = std::env::args()
         .nth(1) // 0th arg is path to this executable
-        .unwrap_or_else(|| "img/mc-skin.png".to_owned());
+        .unwrap_or_else(|| "img/logo.png".to_owned());
     let image = Tree {
         effects: vec![
             Effect {
@@ -30,7 +30,7 @@ fn main() {
     println!("Processing image");
     let start = Instant::now();
     let rgb_image = context.render_to_image(&image);
-    println!("Processed in {:?}", Instant::now() - start);
+    println!("Processed in {:?}", start.elapsed());
     println!("Saving image");
     rgb_image.save("out.png").unwrap();
 }
