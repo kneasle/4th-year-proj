@@ -4,11 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-cgmath = "0.18"
 bytemuck = { version = "1.7", features = ["derive"] }
+cgmath = "0.18"
 env_logger = "0.9"
 image = "0.23"
 index_vec = "0.1"
+itertools = "0.10"
 log = "0.4"
 pollster = "0.2"
 wgpu = "0.11"
