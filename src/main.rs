@@ -23,6 +23,5 @@ fn main() {
             source: ctx.load_layer_from_file("img/logo.png").unwrap(),
         }],
     };
-    dbg!(&image);
-    ctx.render(&image);
+    ctx.render_to_image(&image).save("out.png").unwrap();
 }

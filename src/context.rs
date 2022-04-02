@@ -1,13 +1,14 @@
-use std::{collections::HashMap, num::NonZeroU32, path::Path};
+use std::{collections::HashMap, num::NonZeroU32, ops::Deref, path::Path};
 
 use cgmath::Vector2;
 use index_vec::IndexVec;
+use itertools::Itertools;
 use wgpu::util::DeviceExt;
 
 use crate::{
     effects::{Effect, EffectName, EffectType},
-    image::Image,
-    utils::SizedTexture,
+    image::{EffectInstance, Image, Layer},
+    utils::{Rect, SizedTexture},
 };
 
 /// Persistent state used for processing images.  Only one `Context` is required per instance of
@@ -28,7 +29,8 @@ pub struct Context {
     quad_buffer: wgpu::Buffer,
 
     /* textures */
-    output_texture: Option<SizedTexture>,
+    output_texture: CacheTexture,
+    intermediate_textures: [CacheTexture; 2],
     layers: IndexVec<LayerId, SizedTexture>,
 }
 
@@ -56,13 +58,15 @@ impl Context {
         Self {
             effect_types: HashMap::new(),
 
+            output_texture: CacheTexture::small(&device),
+            intermediate_textures: [CacheTexture::small(&device), CacheTexture::small(&device)],
+
             instance,
             adapter,
             device,
             queue,
 
             quad_buffer,
-            output_texture: None,
             layers: IndexVec::new(),
         }
     }
@@ -79,10 +83,6 @@ impl Context {
     /// have that name).
     pub fn get_effect(&self, name: &EffectName) -> Option<&Effect> {
         self.effect_types.get(name)
-    }
-
-    pub fn render(&mut self, image: &Image) {
-        crate::render::render(self, image);
     }
 
     ////////////
@@ -171,6 +171,282 @@ impl Context {
 
     pub fn layer_dimensions(&self, id: LayerId) -> wgpu::Extent3d {
         self.layers[id].size()
+    }
+}
+
+///////////////
+// RENDERING //
+///////////////
+
+impl Context {
+    /// Render a given [`Image`] to an CPU-memory [`image::RgbaImage`] buffer, ready to be written
+    /// to a file
+    pub fn render_to_image(&mut self, image: &Image) -> image::RgbaImage {
+        let pixel_size = std::mem::size_of::<u32>() as u32;
+        let img_dims = image.size;
+
+        // Render the image into `self.output_texture` (resizing it if necessary)
+        self.render(image);
+
+        // Create a buffer into which we can copy our texture
+        let output_buffer_size = (pixel_size * img_dims.x * img_dims.y) as wgpu::BufferAddress;
+        let output_buffer_desc = wgpu::BufferDescriptor {
+            size: output_buffer_size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            label: None,
+            mapped_at_creation: false,
+        };
+        let output_buffer = self.device.create_buffer(&output_buffer_desc);
+        // Copy the texture into the buffer
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        encoder.copy_texture_to_buffer(
+            wgpu::ImageCopyTexture {
+                aspect: wgpu::TextureAspect::All,
+                texture: &self.output_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+            },
+            wgpu::ImageCopyBuffer {
+                buffer: &output_buffer,
+                layout: wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: NonZeroU32::new(pixel_size * img_dims.x),
+                    rows_per_image: NonZeroU32::new(img_dims.y),
+                },
+            },
+            self.output_texture.size(),
+        );
+        self.queue.submit(Some(encoder.finish()));
+
+        // 'Map' the buffer (i.e. copying from GPU mem into main RAM)
+        let buffer_data = {
+            let buffer_slice = output_buffer.slice(..);
+
+            // NOTE: We have to create the mapping THEN device.poll() before await
+            // the future. Otherwise the application will freeze.
+            let mapping = buffer_slice.map_async(wgpu::MapMode::Read);
+            self.device.poll(wgpu::Maintain::Wait);
+            pollster::block_on(mapping).unwrap();
+
+            buffer_slice.get_mapped_range().to_vec()
+        };
+        output_buffer.unmap();
+
+        // Create an RGB image from the data
+        image::RgbaImage::from_raw(img_dims.x, img_dims.y, buffer_data).unwrap()
+    }
+
+    /// Render an image to the current [`output_texture`](Self::output_texture)
+    pub fn render(&mut self, image: &Image) {
+        // Annotate the image with the `Rect`s covered by the intermediate textures
+        let annotated_image = AnnotatedImage::new(self, image);
+        dbg!(&annotated_image);
+        // Resize textures
+        self.output_texture.resize(
+            &self.device,
+            wgpu::Extent3d {
+                width: image.size.x,
+                height: image.size.y,
+                depth_or_array_layers: 1,
+            },
+        );
+        let tex_size = annotated_image.max_intermediate_texture_size();
+        let max_texture_extent = wgpu::Extent3d {
+            width: tex_size.x.ceil() as u32,
+            height: tex_size.y.ceil() as u32,
+            depth_or_array_layers: 1,
+        };
+        for tex in &mut self.intermediate_textures {
+            tex.resize(&self.device, max_texture_extent);
+        }
+
+        // Command encoder for all the effects' render passes
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Image rendering"),
+            });
+        self.clear_output_texture(&mut encoder);
+        for layer in annotated_image.layers {}
+        self.queue.submit(std::iter::once(encoder.finish()));
+    }
+
+    /// Clear the output buffer.  Layers will be rendered on top of this without clearing.
+    fn clear_output_texture(&mut self, encoder: &mut wgpu::CommandEncoder) {
+        let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some(&format!("Clear output texture")),
+            color_attachments: &[wgpu::RenderPassColorAttachment {
+                view: &self
+                    .output_texture
+                    .create_view(&wgpu::TextureViewDescriptor::default()),
+                resolve_target: None, // No multisampling
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLUE),
+                    store: true,
+                },
+            }],
+            depth_stencil_attachment: None, // Not using depth or stencil
+        });
+    }
+}
+
+#[derive(Debug)]
+struct AnnotatedImage<'img> {
+    layers: Vec<AnnotatedLayer<'img>>,
+    source: &'img Image,
+}
+
+#[derive(Debug)]
+struct AnnotatedLayer<'img> {
+    /// The bounding box of the source region of this layer that actually needs to be computed
+    effects: Vec<AnnotatedEffect<'img>>,
+    source_bbox: Rect<f32>,
+    source: &'img Layer,
+}
+
+#[derive(Debug)]
+struct AnnotatedEffect<'img> {
+    /// The bounding box required of the output region
+    out_bbox: Rect<f32>,
+    source: &'img EffectInstance,
+}
+
+impl<'img> AnnotatedImage<'img> {
+    /// Take an [`Image`] and annotate every layer with the bounding box of the region that has to be
+    /// computed.
+    fn new(ctx: &Context, image: &'img Image) -> Self {
+        let img_bbox = Rect::from_origin(image.size.x as f32, image.size.y as f32);
+        AnnotatedImage {
+            layers: image
+                .layers
+                .iter()
+                .map(|layer| AnnotatedLayer::new(ctx, layer, img_bbox))
+                .collect_vec(),
+            source: image,
+        }
+    }
+
+    /// Return the size of intermediate texture needed to store all the intermediate layers
+    fn max_intermediate_texture_size(&self) -> Vector2<f32> {
+        let mut max_width = 0.0;
+        let mut max_height = 0.0;
+        let mut resize_for_rect = |rect: Rect<f32>| {
+            if rect.width() > max_width {
+                max_width = rect.width();
+            }
+            if rect.height() > max_height {
+                max_height = rect.height();
+            }
+        };
+        for layer in &self.layers {
+            resize_for_rect(layer.source_bbox);
+            for effect in &layer.effects {
+                resize_for_rect(effect.out_bbox);
+            }
+        }
+        Vector2::new(max_width, max_height)
+    }
+}
+
+impl<'img> AnnotatedLayer<'img> {
+    fn new(ctx: &Context, layer: &'img Layer, bbox_from_above: Rect<f32>) -> Self {
+        // Propagate bboxes from below (i.e. compute the regions which are affected by the layer's
+        // source)
+        let mut bboxes_from_below = Vec::new();
+        let layer_size = ctx.get_layer(layer.source).unwrap().size();
+        let bbox_of_source_from_below =
+            Rect::from_origin(layer_size.width as f32, layer_size.height as f32);
+        let mut curr_bbox_from_below = bbox_of_source_from_below;
+        for effect in layer.effects.iter().rev() {
+            let effect_type = ctx.get_effect(&effect.effect_name).unwrap();
+            curr_bbox_from_below = effect_type.transform_bbox(curr_bbox_from_below);
+            // Push the bbox **after** the effect has been applied
+            bboxes_from_below.push(curr_bbox_from_below);
+        }
+        bboxes_from_below.reverse();
+
+        // Propagate bboxes downward, computing the true bboxes (i.e. the intersection of the
+        // bboxes from above and below)
+        let mut effects = Vec::new();
+        let mut curr_bbox_from_above = bbox_from_above;
+        for (effect, bbox_from_below) in layer.effects.iter().zip_eq(bboxes_from_below) {
+            let effect_type = ctx.get_effect(&effect.effect_name).unwrap();
+            curr_bbox_from_above = effect_type.inv_transform_bbox(curr_bbox_from_above);
+            let combined_bbox = bbox_from_above.intersection(bbox_from_below);
+            effects.push(AnnotatedEffect {
+                out_bbox: combined_bbox,
+                source: effect,
+            });
+        }
+
+        // The bbox required by the lowest effect is the bbox of the source layer from above
+        let bbox_of_source_from_above = curr_bbox_from_above;
+        let bbox_of_source = bbox_of_source_from_above.intersection(bbox_of_source_from_below);
+        AnnotatedLayer {
+            source_bbox: bbox_of_source,
+            effects,
+            source: layer,
+        }
+    }
+}
+
+//////////////
+// TEXTURES //
+//////////////
+
+#[derive(Debug)]
+struct CacheTexture {
+    tex: SizedTexture,
+}
+
+impl Deref for CacheTexture {
+    type Target = SizedTexture;
+
+    fn deref(&self) -> &Self::Target {
+        &self.tex
+    }
+}
+
+impl CacheTexture {
+    /// Create a place-holder [`CacheTexture`] with the smallest size possible
+    fn small(device: &wgpu::Device) -> Self {
+        Self::new(device, wgpu::Extent3d::default())
+    }
+
+    /// Create a new [`CacheTexture`] with a given size
+    fn new(device: &wgpu::Device, size: wgpu::Extent3d) -> Self {
+        Self {
+            tex: Self::new_texture(device, size),
+        }
+    }
+
+    /// Resize `self` to make sure there's space for `required_size`
+    fn resize(&mut self, device: &wgpu::Device, required_size: wgpu::Extent3d) {
+        if required_size.width > self.tex.size().width
+            || required_size.height > self.tex.size().height
+            || required_size.depth_or_array_layers > self.tex.size().depth_or_array_layers
+        {
+            self.tex = Self::new_texture(device, required_size);
+        }
+    }
+
+    /// Create a texture that can be used for storing intermediate values between effect chains
+    fn new_texture(device: &wgpu::Device, size: wgpu::Extent3d) -> SizedTexture {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING,
+        });
+        SizedTexture::new(texture, size)
     }
 }
 

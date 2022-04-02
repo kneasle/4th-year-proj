@@ -57,6 +57,10 @@ pub struct Rect<S> {
 }
 
 impl<S: BaseNum> Rect<S> {
+    //////////////////
+    // CONSTRUCTORS //
+    //////////////////
+
     /// Creates a [`Rect`] with a given size and where the minimum corner is the origin (i.e.
     /// `(0, 0)`)
     pub fn from_origin(width: S, height: S) -> Self {
@@ -72,6 +76,26 @@ impl<S: BaseNum> Rect<S> {
             max: min + size,
         }
     }
+
+    /////////////
+    // GETTERS //
+    /////////////
+
+    pub fn size(self) -> Vector2<S> {
+        self.max - self.min
+    }
+
+    pub fn width(self) -> S {
+        self.size().x
+    }
+
+    pub fn height(self) -> S {
+        self.size().y
+    }
+
+    ////////////////
+    // OPERATIONS //
+    ////////////////
 
     /// Translates a [`Rect`] by some amount, preserving the size
     pub fn translate(self, by: Vector2<S>) -> Self {
