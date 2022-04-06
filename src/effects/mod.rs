@@ -11,7 +11,7 @@ use std::{
 pub use per_pixel::PerPixel;
 pub use transform::Transform;
 
-use crate::utils::Rect;
+use crate::utils::{Rect, SizedTexture};
 
 #[derive(Debug)]
 pub struct Effect {
@@ -45,6 +45,13 @@ impl Deref for Effect {
 /// Trait implemented by all effect types
 pub trait EffectType: Debug {
     fn name(&self) -> String;
+
+    fn encode_commands(
+        &self,
+        source: TextureRegion,
+        out: TextureRegion,
+        encoder: &mut wgpu::CommandEncoder,
+    );
 
     /// Given a [`Rect`] `r` in _input space_, return the smallest [`Rect`] in _output space_ which
     /// is affected by the pixels in `r`.
@@ -84,4 +91,13 @@ pub mod built_ins {
     pub fn value_invert() -> PerPixel {
         PerPixel::new("Value Invert".to_owned())
     }
+}
+
+/// A region of a texture which this [`Effect`] interacts with (by either reading or writing to it)
+#[derive(Debug)]
+pub struct TextureRegion<'tex> {
+    /// The region (in virtual space) which is of interest to the [`Effect`]
+    pub region: Rect<f32>,
+    /// The cache texture which we're interacting with
+    pub texture: &'tex SizedTexture,
 }

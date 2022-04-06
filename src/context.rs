@@ -1,14 +1,13 @@
-use std::{collections::HashMap, num::NonZeroU32, ops::Deref, path::Path};
+use std::{collections::HashMap, num::NonZeroU32, path::Path};
 
 use cgmath::Vector2;
 use index_vec::IndexVec;
 use itertools::Itertools;
-use wgpu::util::DeviceExt;
 
 use crate::{
-    effects::{Effect, EffectName, EffectType},
+    effects::{Effect, EffectName, EffectType, TextureRegion},
     image::{EffectInstance, Image, Layer},
-    utils::{Rect, SizedTexture},
+    utils::{round_down_to_origin, round_up_to_extent, CacheTexture, Rect, SizedTexture},
 };
 
 /// Persistent state used for processing images.  Only one `Context` is required per instance of
@@ -18,15 +17,12 @@ pub struct Context {
     effect_types: HashMap<EffectName, Effect>,
 
     /* wgpu essentials */
+    #[allow(dead_code)]
     instance: wgpu::Instance,
+    #[allow(dead_code)]
     adapter: wgpu::Adapter,
     device: wgpu::Device,
     queue: wgpu::Queue,
-
-    /* misc wgpu resources */
-    /// A buffer containing vertices for a single quad with position2/uv data.  Rendering a texture
-    /// to this mesh fills the screen completely
-    quad_buffer: wgpu::Buffer,
 
     /* textures */
     output_texture: CacheTexture,
@@ -49,12 +45,6 @@ impl Context {
         let (device, queue) =
             pollster::block_on(adapter.request_device(&Default::default(), None)).unwrap();
 
-        let quad_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Quad vertex buffer"),
-            contents: bytemuck::cast_slice(&QUAD_VERTICES),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
         Self {
             effect_types: HashMap::new(),
 
@@ -66,7 +56,6 @@ impl Context {
             device,
             queue,
 
-            quad_buffer,
             layers: IndexVec::new(),
         }
     }
@@ -252,12 +241,8 @@ impl Context {
                 depth_or_array_layers: 1,
             },
         );
-        let tex_size = annotated_image.max_intermediate_texture_size();
-        let max_texture_extent = wgpu::Extent3d {
-            width: tex_size.x.ceil() as u32,
-            height: tex_size.y.ceil() as u32,
-            depth_or_array_layers: 1,
-        };
+        let max_texture_extent =
+            round_up_to_extent(annotated_image.max_intermediate_texture_size());
         for tex in &mut self.intermediate_textures {
             tex.resize(&self.device, max_texture_extent);
         }
@@ -268,13 +253,18 @@ impl Context {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Image rendering"),
             });
+        // Fill the output texture with transparency
         self.clear_output_texture(&mut encoder);
-        for layer in annotated_image.layers {}
+        // Add the layers in *reverse* order (i.e. lowest layer first)
+        for layer in annotated_image.layers.iter().rev() {
+            self.render_layer(layer, &mut encoder);
+        }
         self.queue.submit(std::iter::once(encoder.finish()));
     }
 
-    /// Clear the output buffer.  Layers will be rendered on top of this without clearing.
-    fn clear_output_texture(&mut self, encoder: &mut wgpu::CommandEncoder) {
+    /// Add a render pass which simply clears the output buffer.  Layers will be rendered on top of
+    /// this without clearing.
+    fn clear_output_texture(&self, encoder: &mut wgpu::CommandEncoder) {
         let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some(&format!("Clear output texture")),
             color_attachments: &[wgpu::RenderPassColorAttachment {
@@ -289,6 +279,102 @@ impl Context {
             }],
             depth_stencil_attachment: None, // Not using depth or stencil
         });
+    }
+
+    /// Create the render/compute commands required to render a single layer of the image
+    fn render_layer(&self, layer: &AnnotatedLayer, encoder: &mut wgpu::CommandEncoder) {
+        let layer_source_texture = &self.layers[layer.source.source_id];
+        match layer.effects.as_slice() {
+            // If there are no effects, then we just copy the required section of the source layer
+            // TODO: We need to actually do a render pass here to handle alpha-blending properly
+            [] => encoder.copy_texture_to_texture(
+                wgpu::ImageCopyTexture {
+                    texture: &layer_source_texture,
+                    mip_level: 0, // We're not doing any mipmapping
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::ImageCopyTextureBase {
+                    texture: &self.output_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                round_up_to_extent(layer.source_bbox.size()),
+            ),
+            effects => {
+                // Copy the required region of the source texture into the input for the first
+                // effect.  `effects.len() % 2` is used because `effect_idx = effect.len() - 1` for
+                // the bottom-most effect in the chain, so its input index is
+                // `(effects.len() - 1 + 1) % 2 = effects.len() % 2`.
+                //
+                // TODO: Sample directly from the source texture?  Not sure if this is actually
+                // useful; if we're going to implement texture chunking for efficient undo then
+                // this extra pass will be needed anyway to reconstruct the region we're interested
+                // in.
+                encoder.copy_texture_to_texture(
+                    wgpu::ImageCopyTextureBase {
+                        texture: &layer_source_texture,
+                        mip_level: 0, // Not using mipmapping
+                        origin: round_down_to_origin(layer.source_bbox.min()),
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::ImageCopyTextureBase {
+                        texture: &self.intermediate_textures[effects.len() % 2],
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    round_up_to_extent(layer.source_bbox.size()),
+                );
+
+                // Apply effects in *reverse* order (i.e. bottom-most effect first).  Effects and
+                // layers are stored in the order they would be shown in a GUI.  NOTE that the
+                // indices also count down.
+                let mut effect_source_region = layer.source_bbox;
+                for (effect_idx, annot_effect) in effects.iter().enumerate().rev() {
+                    let effect_type = self
+                        .effect_types
+                        .get(&annot_effect.source.effect_name)
+                        .unwrap();
+                    effect_type.encode_commands(
+                        TextureRegion {
+                            region: effect_source_region,
+                            texture: &self.intermediate_textures[(effect_idx + 1) % 2],
+                        },
+                        TextureRegion {
+                            region: annot_effect.out_bbox,
+                            texture: &self.intermediate_textures[effect_idx % 2],
+                        },
+                        encoder,
+                    );
+                    // The source region for the next effect is the current effect's output
+                    // bounding box
+                    effect_source_region = annot_effect.out_bbox;
+                }
+
+                // After all the effects have been run, the final texture is stored in
+                // `self.intermediate_textures[0]`.  Therefore, we want to render that onto the
+                // output texture
+                //
+                // TODO: Take alpha blending into account
+                encoder.copy_texture_to_texture(
+                    wgpu::ImageCopyTexture {
+                        texture: &self.intermediate_textures[0],
+                        mip_level: 0, // We're not doing any mipmapping
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::ImageCopyTextureBase {
+                        texture: &self.output_texture,
+                        mip_level: 0,
+                        origin: round_down_to_origin(effect_source_region.min()),
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    round_up_to_extent(effect_source_region.size()),
+                );
+            }
+        }
     }
 }
 
@@ -355,7 +441,7 @@ impl<'img> AnnotatedLayer<'img> {
         // Propagate bboxes from below (i.e. compute the regions which are affected by the layer's
         // source)
         let mut bboxes_from_below = Vec::new();
-        let layer_size = ctx.get_layer(layer.source).unwrap().size();
+        let layer_size = ctx.get_layer(layer.source_id).unwrap().size();
         let bbox_of_source_from_below =
             Rect::from_origin(layer_size.width as f32, layer_size.height as f32);
         let mut curr_bbox_from_below = bbox_of_source_from_below;
@@ -388,110 +474,6 @@ impl<'img> AnnotatedLayer<'img> {
             source_bbox: bbox_of_source,
             effects,
             source: layer,
-        }
-    }
-}
-
-//////////////
-// TEXTURES //
-//////////////
-
-#[derive(Debug)]
-struct CacheTexture {
-    tex: SizedTexture,
-}
-
-impl Deref for CacheTexture {
-    type Target = SizedTexture;
-
-    fn deref(&self) -> &Self::Target {
-        &self.tex
-    }
-}
-
-impl CacheTexture {
-    /// Create a place-holder [`CacheTexture`] with the smallest size possible
-    fn small(device: &wgpu::Device) -> Self {
-        Self::new(device, wgpu::Extent3d::default())
-    }
-
-    /// Create a new [`CacheTexture`] with a given size
-    fn new(device: &wgpu::Device, size: wgpu::Extent3d) -> Self {
-        Self {
-            tex: Self::new_texture(device, size),
-        }
-    }
-
-    /// Resize `self` to make sure there's space for `required_size`
-    fn resize(&mut self, device: &wgpu::Device, required_size: wgpu::Extent3d) {
-        if required_size.width > self.tex.size().width
-            || required_size.height > self.tex.size().height
-            || required_size.depth_or_array_layers > self.tex.size().depth_or_array_layers
-        {
-            self.tex = Self::new_texture(device, required_size);
-        }
-    }
-
-    /// Create a texture that can be used for storing intermediate values between effect chains
-    fn new_texture(device: &wgpu::Device, size: wgpu::Extent3d) -> SizedTexture {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: None,
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::COPY_SRC
-                | wgpu::TextureUsages::COPY_DST
-                | wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING,
-        });
-        SizedTexture::new(texture, size)
-    }
-}
-
-//////////
-// QUAD //
-//////////
-
-/// The vertices to describe a single quad which maps one set of texture coordinates to the entire
-/// screen.
-// NOTE: The v-coordinates are inverted because wgpu uses y-up for world-space coordinates, but
-// y-down for textures.  Note also that the positions are in clip coordinates - i.e. `(-1, -1)` is
-// the top-left corner and `(1, 1)` is the bottom-right.
-#[rustfmt::skip]
-const QUAD_VERTICES: [Vertex; 4] = [
-    Vertex { position: [-1.0, -1.0], uv: [0.0, 1.0], },
-    Vertex { position: [ 1.0, -1.0], uv: [1.0, 1.0], },
-    Vertex { position: [-1.0,  1.0], uv: [0.0, 0.0], },
-    Vertex { position: [ 1.0,  1.0], uv: [1.0, 0.0], },
-];
-
-#[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct Vertex {
-    position: [f32; 2], // z coordinates set to 0 by the vertex shader
-    uv: [f32; 2],
-}
-
-impl Vertex {
-    fn layout<'a>() -> wgpu::VertexBufferLayout<'a> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            // TODO: Replace this with a `const` call to `wgpu::vertex_attr_array!`?
-            attributes: &[
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x2,
-                    offset: 0,
-                    shader_location: 0, // TODO: Is this what [[location(0)]] does?
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x2,
-                    offset: std::mem::size_of::<[f32; 2]>() as wgpu::BufferAddress,
-                    shader_location: 1,
-                },
-            ],
         }
     }
 }

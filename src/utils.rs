@@ -1,10 +1,68 @@
-use std::fmt::{Debug, Formatter};
+use std::{
+    fmt::{Debug, Formatter},
+    ops::Deref,
+};
 
 use cgmath::{BaseNum, Point2, Vector2};
 
-////////////////////
-// SIZED TEXTURES //
-////////////////////
+//////////////
+// TEXTURES //
+//////////////
+
+/// A cached texture on the GPU, with convenience methods for e.g. resizing
+#[derive(Debug)]
+pub(crate) struct CacheTexture {
+    tex: SizedTexture,
+}
+
+impl Deref for CacheTexture {
+    type Target = SizedTexture;
+
+    fn deref(&self) -> &Self::Target {
+        &self.tex
+    }
+}
+
+impl CacheTexture {
+    /// Create a place-holder [`CacheTexture`] with the smallest size possible
+    pub fn small(device: &wgpu::Device) -> Self {
+        Self::new(device, wgpu::Extent3d::default())
+    }
+
+    /// Create a new [`CacheTexture`] with a given size
+    pub fn new(device: &wgpu::Device, size: wgpu::Extent3d) -> Self {
+        Self {
+            tex: Self::new_texture(device, size),
+        }
+    }
+
+    /// Resize `self` to make sure there's space for `required_size`
+    pub fn resize(&mut self, device: &wgpu::Device, required_size: wgpu::Extent3d) {
+        if required_size.width > self.tex.size().width
+            || required_size.height > self.tex.size().height
+            || required_size.depth_or_array_layers > self.tex.size().depth_or_array_layers
+        {
+            self.tex = Self::new_texture(device, required_size);
+        }
+    }
+
+    /// Create a texture that can be used for storing intermediate values between effect chains
+    fn new_texture(device: &wgpu::Device, size: wgpu::Extent3d) -> SizedTexture {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING,
+        });
+        SizedTexture::new(texture, size)
+    }
+}
 
 /// A [`wgpu::Texture`] which keeps a record of its dimensions (I'm not really sure why wgpu
 /// doesn't give us access to this.  Maybe there's a way that I don't know about - @kneasle).
@@ -81,6 +139,14 @@ impl<S: BaseNum> Rect<S> {
     // GETTERS //
     /////////////
 
+    pub fn min(self) -> Point2<S> {
+        self.min
+    }
+
+    pub fn max(self) -> Point2<S> {
+        self.max
+    }
+
     pub fn size(self) -> Vector2<S> {
         self.max - self.min
     }
@@ -138,6 +204,63 @@ impl<S: Debug> Debug for Rect<S> {
             "Rect(({:?}, {:?}) - ({:?}, {:?}))",
             self.min.x, self.min.y, self.max.x, self.max.y
         )
+    }
+}
+
+//////////
+// QUAD //
+//////////
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct Vertex {
+    position: [f32; 2], // z coordinates set to 0 by the vertex shader
+    uv: [f32; 2],
+}
+
+impl Vertex {
+    pub fn layout() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            // TODO: Replace this with a `const` call to `wgpu::vertex_attr_array!`?
+            attributes: &[
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x2,
+                    offset: 0,
+                    shader_location: 0, // TODO: Is this what [[location(0)]] does?
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x2,
+                    offset: std::mem::size_of::<[f32; 2]>() as wgpu::BufferAddress,
+                    shader_location: 1,
+                },
+            ],
+        }
+    }
+}
+
+//////////
+// MISC //
+//////////
+
+/// Given a [`Vector2`] of `f32`, round this up to the nearest pixel and create a
+/// [`wgpu::Extent3d`]
+pub fn round_up_to_extent(tex_size: Vector2<f32>) -> wgpu::Extent3d {
+    wgpu::Extent3d {
+        width: tex_size.x.ceil() as u32,
+        height: tex_size.y.ceil() as u32,
+        depth_or_array_layers: 1,
+    }
+}
+
+/// Given a floating-point [`Point2`], round this down to the nearest pixel and return that as a
+/// [`wgpu::Origin3d`]
+pub fn round_down_to_origin(point: Point2<f32>) -> wgpu::Origin3d {
+    wgpu::Origin3d {
+        x: point.x.floor() as u32,
+        y: point.y.floor() as u32,
+        z: 0,
     }
 }
 

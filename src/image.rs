@@ -12,7 +12,7 @@ pub struct Image {
 #[derive(Debug)]
 pub struct Layer {
     pub effects: Vec<EffectInstance>,
-    pub source: LayerId,
+    pub source_id: LayerId,
 }
 
 #[derive(Debug, Clone)]
