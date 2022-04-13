@@ -30,6 +30,7 @@ impl EffectType for Transform {
         source: TextureRegion,
         out: TextureRegion,
         encoder: &mut wgpu::CommandEncoder,
+        _device: &wgpu::Device,
     ) {
         // TODO: Be able to exploit the fact that this is a no-op
 

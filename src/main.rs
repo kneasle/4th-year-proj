@@ -7,7 +7,7 @@ use image_ed::{
 
 fn main() {
     let mut ctx = Context::new();
-    let value_inv_name = ctx.load_effect(built_ins::value_invert());
+    let value_inv_name = ctx.load_effect(built_ins::value_invert(ctx.device()));
     let transform_name_1 = ctx.load_effect(effects::Transform::new(-800.0, -800.0));
     let transform_name_2 = ctx.load_effect(effects::Transform::new(100.0, 100.0));
     let image = Image {
@@ -30,9 +30,9 @@ fn main() {
             },
             Layer {
                 effects: vec![
-                    /* EffectInstance {
+                    EffectInstance {
                         effect_name: value_inv_name,
-                    }, */
+                    },
                     EffectInstance {
                         effect_name: transform_name_2,
                     },

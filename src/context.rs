@@ -5,9 +5,11 @@ use index_vec::IndexVec;
 use itertools::Itertools;
 
 use crate::{
-    effects::{Effect, EffectName, EffectType, TextureRegion},
+    effects::{Effect, EffectName, EffectType},
     image::{EffectInstance, Image, Layer},
-    utils::{round_down_to_origin, round_up_to_extent, CacheTexture, Rect, SizedTexture},
+    utils::{
+        round_down_to_origin, round_up_to_extent, CacheTexture, Rect, SizedTexture, TextureRegion,
+    },
 };
 
 /// Persistent state used for processing images.  Only one `Context` is required per instance of
@@ -72,6 +74,11 @@ impl Context {
     /// have that name).
     pub fn get_effect(&self, name: &EffectName) -> Option<&Effect> {
         self.effect_types.get(name)
+    }
+
+    /// Handle to the [`wgpu::Device`] that this `Context` is using for its rendering.
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
     }
 
     ////////////
@@ -273,7 +280,7 @@ impl Context {
                     .create_view(&wgpu::TextureViewDescriptor::default()),
                 resolve_target: None, // No multisampling
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLUE),
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                     store: true,
                 },
             }],
@@ -347,6 +354,7 @@ impl Context {
                             texture: &self.intermediate_textures[effect_idx % 2],
                         },
                         encoder,
+                        &self.device,
                     );
                     // The source region for the next effect is the current effect's output
                     // bounding box

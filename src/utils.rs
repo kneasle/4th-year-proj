@@ -3,7 +3,7 @@ use std::{
     ops::Deref,
 };
 
-use cgmath::{BaseNum, Point2, Vector2};
+use cgmath::{BaseNum, ElementWise, Point2, Vector2};
 
 //////////////
 // TEXTURES //
@@ -102,6 +102,41 @@ impl std::ops::Deref for SizedTexture {
     }
 }
 
+/// A region of a texture which this [`Effect`] interacts with (by either reading or writing to it)
+#[derive(Debug)]
+pub struct TextureRegion<'tex> {
+    /// The region (in virtual space) which is of interest to the [`Effect`]
+    pub region: Rect<f32>,
+    /// The cache texture which we're interacting with
+    pub texture: &'tex SizedTexture,
+}
+
+impl TextureRegion<'_> {
+    /// Returns the `region` as UV coordinates (i.e. where the texture is assumed to cover the
+    /// region `(0, 0)` to `(1, 1)`).
+    ///
+    /// Note that forces the region to occupy the top-left of the texture (consistent with how the
+    /// intermediate textures are stored).  Also remember to flip this because `wgpu` texture
+    /// coordinates go down, while their rendering coordinates go up!
+    pub fn as_uv_region(&self) -> Rect<f32> {
+        Rect::from_origin(
+            self.region.width() / self.texture.width() as f32,
+            self.region.height() / self.texture.height() as f32,
+        )
+    }
+
+    /// Returns the `region` as clip coordinates (i.e. where the texture is assumed to cover the
+    /// region `(-1, -1)` to `(1, 1)`).
+    ///
+    /// Note that forces the region to occupy the top-left of the texture (consistent with how the
+    /// intermediate textures are stored).
+    pub fn as_clip_region(&self) -> Rect<f32> {
+        self.as_uv_region()
+            .mul_element_wise(Vector2::new(2.0, 2.0))
+            .translate(Vector2::new(-1.0, -1.0))
+    }
+}
+
 //////////
 // RECT //
 //////////
@@ -170,6 +205,26 @@ impl<S: BaseNum> Rect<S> {
             max: self.max + by,
         }
     }
+
+    /// Multiply every element in `self` by a given `factor`.  Geometrically, this has the effect
+    /// of scaling around the origin by `factor`.
+    pub fn mul_element_wise(self, factor: Vector2<S>) -> Self {
+        let factor_point = Point2::new(factor.x, factor.y);
+        Self {
+            min: self.min.mul_element_wise(factor_point),
+            max: self.max.mul_element_wise(factor_point),
+        }
+    }
+
+    /// Divides every element in `self` by a given `factor`.  Geometrically, this has the effect
+    /// of scaling around the origin by `1 / factor`.
+    pub fn div_element_wise(self, factor: Vector2<S>) -> Self {
+        let factor_point = Point2::new(factor.x, factor.y);
+        Self {
+            min: self.min.div_element_wise(factor_point),
+            max: self.max.div_element_wise(factor_point),
+        }
+    }
 }
 
 impl<S: PartialOrd> Rect<S> {
@@ -213,12 +268,49 @@ impl<S: Debug> Debug for Rect<S> {
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct Vertex {
+pub struct QuadVertex {
     position: [f32; 2], // z coordinates set to 0 by the vertex shader
     uv: [f32; 2],
 }
 
-impl Vertex {
+impl QuadVertex {
+    // Ideally we'd just put this on the final array, but attributes on expressions are apparently
+    // experimental so for now we'll just stop formatting on the whole function
+    #[rustfmt::skip]
+    pub fn quad(source: &TextureRegion, out: &TextureRegion) -> [Self; 4] {
+        // The source texture region is encoded directly into the UV coordinates (i.e. min is
+        // `(0, 0)`, max is `(1, 1)`).
+        let s = source.as_uv_region();
+        // The source texture region is encoded as clip coordinates (i.e. min is `(-1, -1)`, max is
+        // `(1, 1)`).
+        let o = out.as_clip_region();
+
+        // Texture coordinates:
+        //
+        //                    u
+        //                0       1
+        //     ^     +------------>
+        //     |     |
+        //    1|    0|    2 ----- 3
+        //     |     |    | \     |
+        //  y  |   v |    |   \   |
+        //     |     |    |     \ |
+        //   -1|    1v    0 ----- 1
+        //     |
+        //     +------------------>
+        //               -1       1
+        //                    x
+        //
+        // Note that we invert the y-coordinate of `o` because (-1, 1) is the top-left corner of
+        // clip-space.
+        [
+            QuadVertex { uv: [s.min.x, s.max.y], position: [o.min.x, -o.max.y] },
+            QuadVertex { uv: [s.max.x, s.max.y], position: [o.max.x, -o.max.y] },
+            QuadVertex { uv: [s.min.x, s.min.y], position: [o.min.x, -o.min.y] },
+            QuadVertex { uv: [s.max.x, s.min.y], position: [o.max.x, -o.min.y] },
+        ]
+    }
+
     pub fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
@@ -278,4 +370,10 @@ fn partial_min<S: PartialOrd>(x: S, y: S) -> S {
     } else {
         y
     }
+}
+
+/// Linearly interpolates between `a` and `b` with a factor of `t` (where `a` corresponds to `t =
+/// 0`, `b` corresponds to `t = 1`).
+pub fn lerp<S: BaseNum>(a: S, b: S, t: S) -> S {
+    a * (S::one() - t) + b * t
 }
