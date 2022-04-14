@@ -10,9 +10,10 @@ env_logger = "0.9"
 image = "0.23"
 index_vec = "0.1"
 itertools = "0.10"
+hmap = "0.1"
 log = "0.4"
 pollster = "0.2"
-wgpu = "0.11"
+wgpu = "0.12"
 
 [profile.release]
 debug = true # Debug info is used when profiling with Valgrind

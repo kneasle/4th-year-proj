@@ -1,6 +1,11 @@
+use std::collections::HashMap;
+
 use cgmath::Vector2;
 
-use crate::utils::{round_up_to_extent, Rect};
+use crate::{
+    types::Value,
+    utils::{round_up_to_extent, Rect},
+};
 
 use super::{EffectType, TextureRegion};
 
@@ -27,6 +32,7 @@ impl EffectType for Transform {
 
     fn encode_commands(
         &self,
+        params: &HashMap<String, Value>,
         source: TextureRegion,
         out: TextureRegion,
         encoder: &mut wgpu::CommandEncoder,

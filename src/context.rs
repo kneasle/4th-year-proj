@@ -1,4 +1,4 @@
-use std::{collections::HashMap, num::NonZeroU32, path::Path};
+use std::{collections::HashMap, num::NonZeroU32, path::Path, time::Instant};
 
 use cgmath::Vector2;
 use index_vec::IndexVec;
@@ -182,7 +182,9 @@ impl Context {
         let img_dims = image.size;
 
         // Render the image into `self.output_texture` (resizing it if necessary)
+        let start = Instant::now();
         self.render(image);
+        println!("Rendered in {:?}", start.elapsed());
 
         // Create a buffer into which we can copy our texture
         let output_buffer_size = (pixel_size * img_dims.x * img_dims.y) as wgpu::BufferAddress;
@@ -345,6 +347,7 @@ impl Context {
                         .get(&annot_effect.source.effect_name)
                         .unwrap();
                     effect_type.encode_commands(
+                        &annot_effect.source.params,
                         TextureRegion {
                             region: effect_source_region,
                             texture: &self.intermediate_textures[(effect_idx + 1) % 2],

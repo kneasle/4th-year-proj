@@ -4,6 +4,7 @@ mod per_pixel;
 mod transform;
 
 use std::{
+    collections::HashMap,
     fmt::{Debug, Formatter},
     ops::Deref,
 };
@@ -11,7 +12,10 @@ use std::{
 pub use per_pixel::PerPixel;
 pub use transform::Transform;
 
-use crate::utils::{Rect, TextureRegion};
+use crate::{
+    types::Value,
+    utils::{Rect, TextureRegion},
+};
 
 #[derive(Debug)]
 pub struct Effect {
@@ -48,6 +52,7 @@ pub trait EffectType: Debug {
 
     fn encode_commands(
         &self,
+        params: &HashMap<String, Value>,
         source: TextureRegion,
         out: TextureRegion,
         encoder: &mut wgpu::CommandEncoder,
@@ -87,12 +92,30 @@ impl Debug for EffectName {
 
 /// Built-in effects
 pub mod built_ins {
+    use crate::types::Type;
+
     use super::PerPixel;
 
     pub fn value_invert(device: &wgpu::Device) -> PerPixel {
         PerPixel::new(
             "Value Invert".to_owned(),
             "return vec4<f32>(vec3<f32>(1.0) - col.rgb, col.a);",
+            vec![], // No uniforms
+            device,
+        )
+    }
+
+    pub fn brightness_contrast(device: &wgpu::Device) -> PerPixel {
+        PerPixel::new(
+            "Brightness/Contrast".to_owned(),
+            "
+var brightened: vec3<f32> = vec3<f32>(params.brightness) + col.rgb;
+var contrasted: vec3<f32> = (brightened - 0.5) * params.contrast + 0.5;
+return vec4<f32>(contrasted, col.a);",
+            vec![
+                ("brightness".to_owned(), Type::F32),
+                ("contrast".to_owned(), Type::F32),
+            ],
             device,
         )
     }
@@ -134,10 +157,7 @@ impl SourceTexBindGroupLayout {
                     wgpu::BindGroupLayoutEntry {
                         binding: 1,
                         visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler {
-                            filtering: true,
-                            comparison: false,
-                        },
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
                     },
                 ],
