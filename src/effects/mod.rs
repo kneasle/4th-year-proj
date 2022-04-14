@@ -96,9 +96,9 @@ pub mod built_ins {
 
     use super::PerPixel;
 
-    pub fn value_invert(device: &wgpu::Device) -> PerPixel {
+    pub fn invert(device: &wgpu::Device) -> PerPixel {
         PerPixel::new(
-            "Value Invert".to_owned(),
+            "Invert".to_owned(),
             "return vec4<f32>(vec3<f32>(1.0) - col.rgb, col.a);",
             vec![], // No uniforms
             device,
