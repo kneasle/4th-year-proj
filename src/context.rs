@@ -133,7 +133,7 @@ impl Context {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            format: wgpu::TextureFormat::Rgba8Unorm,
             // We need to copy to the texture and use it as a source for shaders
             //
             // TODO: Once we implement texture chunking, I don't think we'll need `COPY_SRC` or
