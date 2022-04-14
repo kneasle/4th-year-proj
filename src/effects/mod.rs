@@ -61,11 +61,11 @@ pub trait EffectType: Debug {
 
     /// Given a [`Rect`] `r` in _input space_, return the smallest [`Rect`] in _output space_ which
     /// is affected by the pixels in `r`.
-    fn transform_bbox(&self, rect: Rect<f32>) -> Rect<f32>;
+    fn transform_bbox(&self, params: &HashMap<String, Value>, rect: Rect<f32>) -> Rect<f32>;
 
     /// Given a [`Rect`] `r` in _output space_, return the smallest [`Rect`] in _input space_ which
     /// covers the pre-image of every point within `r`.
-    fn inv_transform_bbox(&self, rect: Rect<f32>) -> Rect<f32>;
+    fn inv_transform_bbox(&self, params: &HashMap<String, Value>, rect: Rect<f32>) -> Rect<f32>;
 }
 
 /// A unique identifier for effects

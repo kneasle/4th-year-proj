@@ -7,18 +7,21 @@ use std::{alloc::Layout, collections::HashMap};
 pub enum Type {
     /// 32-bit floating point number
     F32,
+    I32,
 }
 
 impl Type {
     pub fn wgsl_name(self) -> &'static str {
         match self {
             Self::F32 => "f32",
+            Self::I32 => "i32",
         }
     }
 
     pub fn layout(self) -> Layout {
         match self {
             Self::F32 => Layout::new::<f32>(),
+            Self::I32 => Layout::new::<i32>(),
         }
     }
 }
@@ -27,12 +30,28 @@ impl Type {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Value {
     F32(f32),
+    I32(i32),
 }
 
 impl Value {
     pub fn type_(self) -> Type {
         match self {
             Self::F32(_) => Type::F32,
+            Self::I32(_) => Type::I32,
+        }
+    }
+
+    pub fn get_f32(self) -> Option<f32> {
+        match self {
+            Self::F32(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub fn get_i32(self) -> Option<i32> {
+        match self {
+            Self::I32(v) => Some(v),
+            _ => None,
         }
     }
 
@@ -40,6 +59,7 @@ impl Value {
     fn bytes(&self) -> &[u8] {
         match self {
             Self::F32(v) => bytemuck::bytes_of(v),
+            Self::I32(v) => bytemuck::bytes_of(v),
         }
     }
 

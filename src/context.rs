@@ -458,7 +458,7 @@ impl<'img> AnnotatedLayer<'img> {
         let mut curr_bbox_from_below = bbox_of_source_from_below;
         for effect in layer.effects.iter().rev() {
             let effect_type = ctx.get_effect(&effect.effect_name).unwrap();
-            curr_bbox_from_below = effect_type.transform_bbox(curr_bbox_from_below);
+            curr_bbox_from_below = effect_type.transform_bbox(&effect.params, curr_bbox_from_below);
             // Push the bbox **after** the effect has been applied
             bboxes_from_below.push(curr_bbox_from_below);
         }
@@ -470,7 +470,8 @@ impl<'img> AnnotatedLayer<'img> {
         let mut curr_bbox_from_above = bbox_from_above;
         for (effect, bbox_from_below) in layer.effects.iter().zip_eq(bboxes_from_below) {
             let effect_type = ctx.get_effect(&effect.effect_name).unwrap();
-            curr_bbox_from_above = effect_type.inv_transform_bbox(curr_bbox_from_above);
+            curr_bbox_from_above =
+                effect_type.inv_transform_bbox(&effect.params, curr_bbox_from_above);
             let combined_bbox = bbox_from_above.intersection(bbox_from_below);
             effects.push(AnnotatedEffect {
                 out_bbox: combined_bbox,

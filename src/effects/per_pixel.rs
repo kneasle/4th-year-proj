@@ -177,11 +177,11 @@ impl EffectType for PerPixel {
         render_pass.draw(0..4, 0..1); // Quad always has 4 vertices
     }
 
-    fn transform_bbox(&self, r: Rect<f32>) -> Rect<f32> {
+    fn transform_bbox(&self, _params: &HashMap<String, Value>, r: Rect<f32>) -> Rect<f32> {
         r // Per-pixel effects don't change the bbox; they transform the pixels individually
     }
 
-    fn inv_transform_bbox(&self, r: Rect<f32>) -> Rect<f32> {
+    fn inv_transform_bbox(&self, _params: &HashMap<String, Value>, r: Rect<f32>) -> Rect<f32> {
         r // Per-pixel effects don't change the bbox; they transform the pixels individually
     }
 }

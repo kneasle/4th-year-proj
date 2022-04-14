@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use cgmath::Vector2;
+use hmap::hmap;
 use image_ed::{
     context::Context,
     effects::{self, built_ins},
@@ -12,8 +13,7 @@ fn main() {
     let mut ctx = Context::new();
     let invert_name = ctx.load_effect(built_ins::invert(ctx.device()));
     let brightness_contrast_name = ctx.load_effect(built_ins::brightness_contrast(ctx.device()));
-    let transform_name_1 = ctx.load_effect(effects::Transform::new(-800.0, -800.0));
-    let transform_name_2 = ctx.load_effect(effects::Transform::new(100.0, 100.0));
+    let transform_name = ctx.load_effect(effects::Transform());
 
     let image = Image {
         size: Vector2::new(512, 512),
@@ -24,8 +24,11 @@ fn main() {
             },
             Layer {
                 effects: vec![EffectInstance {
-                    effect_name: transform_name_1,
-                    params: HashMap::new(),
+                    effect_name: transform_name.clone(),
+                    params: hmap! {
+                        "x".to_owned() => Value::I32(-800),
+                        "y".to_owned() => Value::I32(-800)
+                    },
                 }],
                 source_id: ctx.load_layer_from_file("img/logo.png").unwrap(),
             },
@@ -33,7 +36,7 @@ fn main() {
                 effects: vec![
                     EffectInstance {
                         effect_name: brightness_contrast_name.clone(),
-                        params: hmap::hmap! {
+                        params: hmap! {
                             "brightness".to_owned() => Value::F32(-0.4),
                             "contrast".to_owned() => Value::F32(3.0)
                         },
@@ -43,8 +46,11 @@ fn main() {
                         params: HashMap::new(),
                     },
                     EffectInstance {
-                        effect_name: transform_name_2,
-                        params: HashMap::new(),
+                        effect_name: transform_name.clone(),
+                        params: hmap! {
+                            "x".to_owned() => Value::I32(100),
+                            "y".to_owned() => Value::I32(100)
+                        },
                     },
                 ],
                 source_id: ctx.load_layer_from_file("img/logo.png").unwrap(),
