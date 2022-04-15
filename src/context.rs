@@ -1,4 +1,4 @@
-use std::{collections::HashMap, num::NonZeroU32, path::Path, time::Instant};
+use std::{collections::HashMap, num::NonZeroU32, path::Path};
 
 use cgmath::Vector2;
 use index_vec::IndexVec;
@@ -170,6 +170,12 @@ impl Context {
     }
 }
 
+impl Default for Context {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 ///////////////
 // RENDERING //
 ///////////////
@@ -182,9 +188,7 @@ impl Context {
         let img_dims = image.size;
 
         // Render the image into `self.output_texture` (resizing it if necessary)
-        let start = Instant::now();
         self.render(image);
-        println!("Rendered in {:?}", start.elapsed());
 
         // Create a buffer into which we can copy our texture
         let output_buffer_size = (pixel_size * img_dims.x * img_dims.y) as wgpu::BufferAddress;
@@ -275,7 +279,7 @@ impl Context {
     /// this without clearing.
     fn clear_output_texture(&self, encoder: &mut wgpu::CommandEncoder) {
         let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some(&format!("Clear output texture")),
+            label: Some("Clear output texture"),
             color_attachments: &[wgpu::RenderPassColorAttachment {
                 view: &self
                     .output_texture
@@ -306,7 +310,7 @@ impl Context {
         // in.
         encoder.copy_texture_to_texture(
             wgpu::ImageCopyTextureBase {
-                texture: &layer_source_texture,
+                texture: layer_source_texture,
                 mip_level: 0, // Not using mipmapping
                 origin: round_down_to_origin(layer.source_bbox.min()),
                 aspect: wgpu::TextureAspect::All,

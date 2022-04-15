@@ -123,7 +123,7 @@ impl EffectType for PerPixel {
         // computed from the intersection of the same two bboxes)
         assert_eq!(source.region, out.region);
 
-        let source_tex_bind_group = self.source_tex_layout.bind_group(&source.texture, device);
+        let source_tex_bind_group = self.source_tex_layout.bind_group(source.texture, device);
         // TODO: Store all the quads in one large buffer and send them all to the GPU in one go
         let quad_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some(&format!("{} quad buffer", self.name)),
@@ -200,7 +200,7 @@ fn generate_wgsl_code(per_pixel_code: &str, params: &[(String, Type)]) -> String
     if !params.is_empty() {
         code.push_str("struct Params {\n");
         for (var_name, type_) in params {
-            write!(code, "    {}: {};\n", var_name, type_.wgsl_name()).unwrap();
+            writeln!(code, "    {}: {};", var_name, type_.wgsl_name()).unwrap();
         }
         code.push_str("};\n\n");
     }

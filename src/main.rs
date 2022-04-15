@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Instant};
 
 use cgmath::Vector2;
 use hmap::hmap;
@@ -35,7 +35,7 @@ fn main() {
             Layer {
                 effects: vec![
                     EffectInstance {
-                        effect_name: brightness_contrast_name.clone(),
+                        effect_name: brightness_contrast_name,
                         params: hmap! {
                             "brightness".to_owned() => Value::F32(-0.4),
                             "contrast".to_owned() => Value::F32(3.0)
@@ -46,7 +46,7 @@ fn main() {
                         params: HashMap::new(),
                     },
                     EffectInstance {
-                        effect_name: transform_name.clone(),
+                        effect_name: transform_name,
                         params: hmap! {
                             "x".to_owned() => Value::I32(100),
                             "y".to_owned() => Value::I32(100)
@@ -58,5 +58,8 @@ fn main() {
         ],
     };
 
-    ctx.render_to_image(&image).save("out.png").unwrap();
+    let start = Instant::now();
+    let img = ctx.render_to_image(&image);
+    println!("Rendered in {:?}", start.elapsed());
+    img.save("out.png").unwrap();
 }

@@ -33,13 +33,13 @@ impl EffectType for Transform {
         assert_eq!(source.region.size(), out.region.size());
         encoder.copy_texture_to_texture(
             wgpu::ImageCopyTextureBase {
-                texture: &source.texture,
+                texture: source.texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
             wgpu::ImageCopyTextureBase {
-                texture: &out.texture,
+                texture: out.texture,
                 mip_level: 0,
                 // Note that we don't actually perform the translation because we always use the
                 // top-left corner of the cache texture, regardless of where that corresponds in
