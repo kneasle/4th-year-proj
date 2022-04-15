@@ -5,6 +5,9 @@ use std::{
 
 use cgmath::{BaseNum, ElementWise, Point2, Vector2};
 
+#[allow(unused_imports)] // Only used for doc comments
+use crate::image::EffectInstance;
+
 //////////////
 // TEXTURES //
 //////////////
@@ -102,10 +105,10 @@ impl std::ops::Deref for SizedTexture {
     }
 }
 
-/// A region of a texture which this [`Effect`] interacts with (by either reading or writing to it)
+/// A region of a texture which an [`EffectInstance`] interacts with (by either reading or writing to it)
 #[derive(Debug)]
 pub struct TextureRegion<'tex> {
-    /// The region (in virtual space) which is of interest to the [`Effect`]
+    /// The region (in virtual space) which is of interest to the [`EffectInstance`]
     pub region: Rect<f32>,
     /// The cache texture which we're interacting with
     pub texture: &'tex SizedTexture,

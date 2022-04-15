@@ -19,7 +19,7 @@ pub struct Layer {
 
 #[derive(Debug, Clone)]
 pub struct EffectInstance {
-    /// The name of the [`Effect`] of which this is an instance
+    /// The name of the [`EffectType`](crate::effects::EffectType) of which this is an instance
     pub effect_name: EffectName,
     pub params: HashMap<String, Value>,
 }

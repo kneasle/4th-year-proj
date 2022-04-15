@@ -181,6 +181,11 @@ impl Default for Context {
 ///////////////
 
 impl Context {
+    /// Get a [`SizedTexture`] containing the last rendered [`Image`]
+    pub fn output_texture(&self) -> &SizedTexture {
+        &self.output_texture
+    }
+
     /// Render a given [`Image`] to an CPU-memory [`image::RgbaImage`] buffer, ready to be written
     /// to a file
     pub fn render_to_image(&mut self, image: &Image) -> image::RgbaImage {
