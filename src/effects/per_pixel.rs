@@ -4,7 +4,7 @@ use wgpu::util::DeviceExt;
 
 use crate::{
     types::{self, Type, Value},
-    utils::{QuadVertex, Rect, TextureRegion},
+    utils::{QuadVertex, Rect, SourceTexBindGroupLayout, TextureRegion},
 };
 
 use super::EffectType;
@@ -15,7 +15,7 @@ pub struct PerPixel {
     name: String,
     param_types: Vec<(String, Type)>,
     params_layout: wgpu::BindGroupLayout, // Unused if `param_types.is_empty()`
-    source_tex_layout: super::SourceTexBindGroupLayout,
+    source_tex_layout: SourceTexBindGroupLayout,
     pipeline: wgpu::RenderPipeline,
 }
 
@@ -37,7 +37,7 @@ impl PerPixel {
 
         // Bind group layouts (we only create a bind group layout for the parameters if there
         // actually are any, because `wgpu` doesn't allow 0-sized uniforms).
-        let source_tex_layout = super::SourceTexBindGroupLayout::new(&name, device);
+        let source_tex_layout = SourceTexBindGroupLayout::new(&name, device);
         let params_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some(&format!("{} params bind group", name)),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -51,7 +51,7 @@ impl PerPixel {
                 count: None,
             }],
         });
-        let mut bind_group_layouts = vec![&source_tex_layout.layout];
+        let mut bind_group_layouts = vec![source_tex_layout.layout()];
         if !param_types.is_empty() {
             bind_group_layouts.push(&params_layout);
         }

@@ -110,11 +110,29 @@ impl std::ops::Deref for SizedTexture {
 pub struct TextureRegion<'tex> {
     /// The region (in virtual space) which is of interest to the [`EffectInstance`]
     pub region: Rect<f32>,
+    /// The origin of `texture` in virtual space
+    pub texture_origin: Point2<f32>,
     /// The cache texture which we're interacting with
     pub texture: &'tex SizedTexture,
 }
 
-impl TextureRegion<'_> {
+impl<'tex> TextureRegion<'tex> {
+    pub fn with_orign_zero(region: Rect<f32>, texture: &'tex SizedTexture) -> Self {
+        Self {
+            region,
+            texture_origin: Point2::new(0.0, 0.0),
+            texture,
+        }
+    }
+
+    pub fn for_intermediate_texture(region: Rect<f32>, texture: &'tex SizedTexture) -> Self {
+        Self {
+            region,
+            texture_origin: region.min(), // We always use the top-left region of source textures
+            texture,
+        }
+    }
+
     /// Returns the `region` as UV coordinates (i.e. where the texture is assumed to cover the
     /// region `(0, 0)` to `(1, 1)`).
     ///
@@ -122,10 +140,12 @@ impl TextureRegion<'_> {
     /// intermediate textures are stored).  Also remember to flip this because `wgpu` texture
     /// coordinates go down, while their rendering coordinates go up!
     pub fn as_uv_region(&self) -> Rect<f32> {
-        Rect::from_origin(
-            self.region.width() / self.texture.width() as f32,
-            self.region.height() / self.texture.height() as f32,
-        )
+        self.region
+            .translate(Point2::new(0.0, 0.0) - self.texture_origin)
+            .div_element_wise(Vector2::new(
+                self.texture.width() as f32,
+                self.texture.height() as f32,
+            ))
     }
 
     /// Returns the `region` as clip coordinates (i.e. where the texture is assumed to cover the
@@ -137,6 +157,77 @@ impl TextureRegion<'_> {
         self.as_uv_region()
             .mul_element_wise(Vector2::new(2.0, 2.0))
             .translate(Vector2::new(-1.0, -1.0))
+    }
+}
+
+/// A wrapper around [`wgpu::BindGroupLayout`] which generates the correct settings for image
+/// effects' source textures
+#[derive(Debug)]
+pub(crate) struct SourceTexBindGroupLayout {
+    pipeline_name: String,
+    layout: wgpu::BindGroupLayout,
+}
+
+impl SourceTexBindGroupLayout {
+    pub fn new(pipeline_name: &str, device: &wgpu::Device) -> Self {
+        Self {
+            pipeline_name: pipeline_name.to_owned(),
+            layout: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some(&format!("{} source tex bind group layout", pipeline_name)),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            // TODO: We potentially don't need to do a ton of u8 -> f32 -> u8
+                            // conversions.  I'm not sure if they actually slow things down; they're so
+                            // widespread in games that GPUs almost certainly have custom hardware for
+                            // it.
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            }),
+        }
+    }
+
+    pub fn bind_group(&self, texture: &wgpu::Texture, device: &wgpu::Device) -> wgpu::BindGroup {
+        // Source texture bind group
+        let tex_in_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let tex_in_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some(&format!("{} tex input sampler", self.pipeline_name)),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(&format!("{} source tex bind group", self.pipeline_name)),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&tex_in_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&tex_in_sampler),
+                },
+            ],
+        })
+    }
+
+    #[must_use]
+    pub(crate) fn layout(&self) -> &wgpu::BindGroupLayout {
+        &self.layout
     }
 }
 
@@ -207,6 +298,11 @@ impl<S: BaseNum> Rect<S> {
             min: self.min + by,
             max: self.max + by,
         }
+    }
+
+    /// Translates a [`Rect`] by some amount, preserving the size
+    pub fn translate_by_point(self, by: Point2<S>) -> Self {
+        self.translate(Vector2::new(by.x, by.y))
     }
 
     /// Multiply every element in `self` by a given `factor`.  Geometrically, this has the effect

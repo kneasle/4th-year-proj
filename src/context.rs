@@ -3,12 +3,14 @@ use std::{collections::HashMap, num::NonZeroU32, path::Path};
 use cgmath::Vector2;
 use index_vec::IndexVec;
 use itertools::Itertools;
+use wgpu::util::DeviceExt;
 
 use crate::{
     effects::{Effect, EffectName, EffectType},
     image::{EffectInstance, Image, Layer},
     utils::{
-        round_down_to_origin, round_up_to_extent, CacheTexture, Rect, SizedTexture, TextureRegion,
+        round_down_to_origin, round_up_to_extent, CacheTexture, QuadVertex, Rect, SizedTexture,
+        SourceTexBindGroupLayout, TextureRegion,
     },
 };
 
@@ -17,6 +19,10 @@ use crate::{
 pub struct Context {
     /* Loaded effect classes */
     effect_types: HashMap<EffectName, Effect>,
+
+    /* layer compositing resources */
+    compositing_source_tex_layout: SourceTexBindGroupLayout,
+    compositing_pipeline: wgpu::RenderPipeline,
 
     /* wgpu essentials */
     #[allow(dead_code)]
@@ -47,12 +53,64 @@ impl Context {
         let (device, queue) =
             pollster::block_on(adapter.request_device(&Default::default(), None)).unwrap();
 
+        // Construct render pipeline for compositing layers into the final image
+        let compositing_source_tex_layout =
+            SourceTexBindGroupLayout::new("Image compositing", &device);
+        let shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+            label: Some("Image compositing shader module"),
+            source: wgpu::ShaderSource::Wgsl(COMPOSITING_SHADER_CODE.into()),
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Image compositing render layout"),
+            bind_group_layouts: &[compositing_source_tex_layout.layout()],
+            push_constant_ranges: &[],
+        });
+        let compositing_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Image compositing render pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: "vs_main",
+                buffers: &[QuadVertex::layout()],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: "fs_main",
+                targets: &[wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    // NOTE that we're doing alpha-blending here to handle transparent layers
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                }],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw, // verts go anti-clockwise
+                cull_mode: Some(wgpu::Face::Back),
+                polygon_mode: wgpu::PolygonMode::Fill,
+                // Both of these require GPU features to use.  So we keep them disabled wherever
+                // possible to increase the range of GPUs we can run on.
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: None, // Not using any depth testing
+            multisample: wgpu::MultisampleState::default(), // Not using multi-sampling
+            multiview: None,
+        });
+
         Self {
+            // Effect plug-ins
             effect_types: HashMap::new(),
 
             output_texture: CacheTexture::small(&device),
             intermediate_textures: [CacheTexture::small(&device), CacheTexture::small(&device)],
 
+            // data for the final layer compositing pipeline
+            compositing_source_tex_layout,
+            compositing_pipeline,
+
+            // misc wgpu resources
             instance,
             adapter,
             device,
@@ -175,6 +233,41 @@ impl Default for Context {
         Self::new()
     }
 }
+
+const COMPOSITING_SHADER_CODE: &str = "
+[[group(0), binding(0)]]
+var t_diffuse: texture_2d<f32>;
+[[group(0), binding(1)]]
+var s_diffuse: sampler;
+
+// VERTEX SHADER
+
+struct VertexInput {
+    [[location(0)]] position: vec2<f32>;
+    [[location(1)]] tex_coords: vec2<f32>;
+};
+
+struct VertexOutput {
+    [[builtin(position)]] clip_position: vec4<f32>;
+    [[location(0)]] tex_coords: vec2<f32>;
+};
+
+[[stage(vertex)]]
+fn vs_main(
+    model: VertexInput,
+) -> VertexOutput {
+    var out: VertexOutput;
+    out.tex_coords = model.tex_coords;
+    out.clip_position = vec4<f32>(model.position, 0.0, 1.0);
+    return out;
+}
+
+// FRAGMENT SHADER
+
+[[stage(fragment)]]
+fn fs_main(in: VertexOutput) -> [[location(0)]] vec4<f32> {
+    return textureSample(t_diffuse, s_diffuse, in.tex_coords);
+}";
 
 ///////////////
 // RENDERING //
@@ -340,14 +433,14 @@ impl Context {
                 .unwrap();
             effect_type.encode_commands(
                 &annot_effect.source.params,
-                TextureRegion {
-                    region: effect_source_region,
-                    texture: &self.intermediate_textures[(effect_idx + 1) % 2],
-                },
-                TextureRegion {
-                    region: annot_effect.out_bbox,
-                    texture: &self.intermediate_textures[effect_idx % 2],
-                },
+                TextureRegion::for_intermediate_texture(
+                    effect_source_region,
+                    &self.intermediate_textures[(effect_idx + 1) % 2],
+                ),
+                TextureRegion::for_intermediate_texture(
+                    annot_effect.out_bbox,
+                    &self.intermediate_textures[effect_idx % 2],
+                ),
                 encoder,
                 &self.device,
             );
@@ -358,24 +451,46 @@ impl Context {
 
         // After all the effects have been run, the final texture is stored in
         // `self.intermediate_textures[0]`.  Therefore, we want to render that onto the
-        // output texture
-        //
-        // TODO: Take alpha blending into account
-        encoder.copy_texture_to_texture(
-            wgpu::ImageCopyTexture {
-                texture: &self.intermediate_textures[0],
-                mip_level: 0, // We're not doing any mipmapping
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::ImageCopyTextureBase {
-                texture: &self.output_texture,
-                mip_level: 0,
-                origin: round_down_to_origin(effect_source_region.min()),
-                aspect: wgpu::TextureAspect::All,
-            },
-            round_up_to_extent(effect_source_region.size()),
-        );
+        // output texture.  We need to handle this as a render pass with alpha-blending (as opposed
+        // to a texture copy) in order to correctly preserve transparency - transparent parts of a
+        // layer should show the layer below, rather than overwriting that layer with
+        // transparency).
+        let output_region = effect_source_region; // The final layer region is the source for a
+                                                  // hypothetical next effect
+        let layer_final_tex_bind_group = self
+            .compositing_source_tex_layout
+            .bind_group(&self.intermediate_textures[0], &self.device);
+        // TODO: Store all the quads in one large buffer and send them all to the GPU in one go
+        let source_region =
+            TextureRegion::for_intermediate_texture(output_region, &self.intermediate_textures[0]);
+        let out_region = TextureRegion::with_orign_zero(output_region, &self.output_texture);
+        let quad_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Image compositing quad buffer"),
+                contents: bytemuck::cast_slice(&QuadVertex::quad(&source_region, &out_region)),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+        let render_pass_label = format!("Image compositing render pass");
+        let render_pass_desc = wgpu::RenderPassDescriptor {
+            label: Some(&render_pass_label),
+            color_attachments: &[wgpu::RenderPassColorAttachment {
+                view: &self
+                    .output_texture
+                    .create_view(&wgpu::TextureViewDescriptor::default()),
+                resolve_target: None, // No multi-sampling
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: true,
+                },
+            }],
+            depth_stencil_attachment: None, // Not using depth or stencil
+        };
+        let mut compositing_render_pass = encoder.begin_render_pass(&render_pass_desc);
+        compositing_render_pass.set_pipeline(&self.compositing_pipeline);
+        compositing_render_pass.set_vertex_buffer(0, quad_buffer.slice(..));
+        compositing_render_pass.set_bind_group(0, &layer_final_tex_bind_group, &[]);
+        compositing_render_pass.draw(0..4, 0..1);
     }
 }
 
