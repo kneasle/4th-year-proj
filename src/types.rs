@@ -62,23 +62,49 @@ impl Value {
             Self::I32(v) => bytemuck::bytes_of(v),
         }
     }
+}
 
-    fn write(self, expected_type: Type, buffer: &mut Vec<u8>) {
-        assert_eq!(self.type_(), expected_type);
-        let layout = expected_type.layout();
+#[derive(Debug, Default)]
+pub struct BufferBuilder {
+    inner: Vec<u8>,
+}
+
+impl BufferBuilder {
+    pub fn add_value(&mut self, value: Value) {
+        self.add_bytes(value.type_().layout(), value.bytes());
+    }
+
+    pub fn add<T: bytemuck::Pod>(&mut self, value: T) {
+        self.add_bytes(Layout::new::<T>(), bytemuck::bytes_of(&value));
+    }
+
+    pub fn add_bytes(&mut self, layout: Layout, bytes: &[u8]) {
+        assert_eq!(bytes.len(), layout.size());
         // Add (zero) padding until we reach a multiple of `alignment`
-        while buffer.len() % layout.align() != 0 {
-            buffer.push(0);
+        while self.inner.len() % layout.align() != 0 {
+            self.inner.push(0);
         }
-        // Write the bytes of this type into the buffer (zeroing them first)
-        buffer.extend_from_slice(self.bytes());
+        // Write the bytes of this type into the buffer
+        self.inner.extend_from_slice(bytes);
+    }
+
+    pub fn finish(self) -> Vec<u8> {
+        self.into()
+    }
+}
+
+impl From<BufferBuilder> for Vec<u8> {
+    fn from(b: BufferBuilder) -> Self {
+        b.inner
     }
 }
 
 pub fn make_buffer(fields: &[(String, Type)], values: &HashMap<String, Value>) -> Vec<u8> {
-    let mut buffer = Vec::new();
+    let mut buffer = BufferBuilder::default();
     for (field_name, field_type) in fields {
-        values[field_name].write(*field_type, &mut buffer);
+        let field_value = values[field_name];
+        assert_eq!(field_value.type_(), *field_type);
+        buffer.add_value(field_value);
     }
-    buffer
+    buffer.into()
 }

@@ -455,7 +455,7 @@ pub fn round_down_to_origin(point: Point2<f32>) -> wgpu::Origin3d {
     }
 }
 
-fn partial_max<S: PartialOrd>(x: S, y: S) -> S {
+pub fn partial_max<S: PartialOrd>(x: S, y: S) -> S {
     if x < y {
         y
     } else {
@@ -463,7 +463,7 @@ fn partial_max<S: PartialOrd>(x: S, y: S) -> S {
     }
 }
 
-fn partial_min<S: PartialOrd>(x: S, y: S) -> S {
+pub fn partial_min<S: PartialOrd>(x: S, y: S) -> S {
     if x < y {
         x
     } else {

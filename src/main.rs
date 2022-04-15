@@ -37,8 +37,8 @@ fn main() {
                     EffectInstance {
                         effect_name: brightness_contrast_name,
                         params: hmap! {
-                            "brightness".to_owned() => Value::F32(-0.4),
-                            "contrast".to_owned() => Value::F32(3.0)
+                            "contrast".to_owned() => Value::F32(-0.4),
+                            "brightness".to_owned() => Value::F32(0.7)
                         },
                     },
                     EffectInstance {

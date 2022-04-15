@@ -10,13 +10,18 @@ use crate::{
 use super::EffectType;
 
 /// An effect who's effect can be computed independently for each pixel.
-#[derive(Debug)]
 pub struct PerPixel {
     name: String,
     param_types: Vec<(String, Type)>,
-    params_layout: wgpu::BindGroupLayout, // Unused if `param_types.is_empty()`
+    custom_uniforms: Option<CustomUniforms>,
+    uniforms_layout: wgpu::BindGroupLayout, // Unused if `param_types.is_empty()`
     source_tex_layout: SourceTexBindGroupLayout,
     pipeline: wgpu::RenderPipeline,
+}
+
+pub struct CustomUniforms {
+    pub types: Vec<(String, Type)>,
+    pub buffer_from_params: Box<dyn Fn(&HashMap<String, Value>) -> Vec<u8>>,
 }
 
 impl PerPixel {
@@ -25,20 +30,23 @@ impl PerPixel {
         name: String,
         per_pixel_code: &str,
         param_types: Vec<(String, Type)>,
+        custom_uniforms: Option<CustomUniforms>,
         device: &wgpu::Device,
     ) -> Self {
+        // If there aren't any `custom_uniforms` then the uniforms are the same as the parameters
+        let uniform_types = custom_uniforms.as_ref().map_or(&param_types, |c| &c.types);
         // Load shader code
         let shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
             label: Some(&format!("{} shader module", name)),
             source: wgpu::ShaderSource::Wgsl(
-                generate_wgsl_code(per_pixel_code, &param_types).into(),
+                generate_wgsl_code(per_pixel_code, uniform_types).into(),
             ),
         });
 
         // Bind group layouts (we only create a bind group layout for the parameters if there
         // actually are any, because `wgpu` doesn't allow 0-sized uniforms).
         let source_tex_layout = SourceTexBindGroupLayout::new(&name, device);
-        let params_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let uniforms_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some(&format!("{} params bind group", name)),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
@@ -53,7 +61,7 @@ impl PerPixel {
         });
         let mut bind_group_layouts = vec![source_tex_layout.layout()];
         if !param_types.is_empty() {
-            bind_group_layouts.push(&params_layout);
+            bind_group_layouts.push(&uniforms_layout);
         }
         // Render pipeline
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -97,8 +105,9 @@ impl PerPixel {
         Self {
             name,
             param_types,
+            custom_uniforms,
 
-            params_layout,
+            uniforms_layout,
             source_tex_layout,
             pipeline,
         }
@@ -152,21 +161,25 @@ impl EffectType for PerPixel {
             }],
             depth_stencil_attachment: None, // Not using depth or stencil
         };
-        let params_bind_group; // Bind group here so it gets dropped after `render_pass`
+        let params_bind_group; // This has to be dropped after `render_pass`
         let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_vertex_buffer(0, quad_buffer.slice(..));
         render_pass.set_bind_group(0, &source_tex_bind_group, &[]);
         if !self.param_types.is_empty() {
             // TODO: Store all the params in a single buffer
+            let uniform_buffer = self.custom_uniforms.as_ref().map_or_else(
+                || types::make_buffer(&self.param_types, params), // Use params if no custom uniforms
+                |c| (c.buffer_from_params)(params), // Convert parameters into custom uniforms
+            );
             let params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some(&format!("{} params buffer", self.name)),
-                contents: &types::make_buffer(&self.param_types, params),
+                contents: &uniform_buffer,
                 usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
             });
             params_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(&format!("{} params bind group", self.name)),
-                layout: &self.params_layout,
+                label: Some(&format!("{} uniforms bind group", self.name)),
+                layout: &self.uniforms_layout,
                 entries: &[wgpu::BindGroupEntry {
                     binding: 0,
                     resource: params_buffer.as_entire_binding(),
@@ -191,15 +204,15 @@ impl EffectType for PerPixel {
 // NOTE: wgpu doesn't allow us to create 0-sized uniforms.  None of our [`Type`]s have 0-size, so a
 // uniform is 0-sized iff there are no uniforms.  Therefore, in the case of `uniforms = []` we
 // don't emit any WGSL code for the uniforms at all.
-fn generate_wgsl_code(per_pixel_code: &str, params: &[(String, Type)]) -> String {
+fn generate_wgsl_code(per_pixel_code: &str, uniform_types: &[(String, Type)]) -> String {
     // TODO: Make sure that the uniforms are actually valid identifiers
 
     let mut code = String::new();
     // Add struct definition for the `Uniforms`.  These will always be attached to binding 0 of
     // bind group 1 (i.e. `[[group(1), binding(0)]]` in WGSL).
-    if !params.is_empty() {
+    if !uniform_types.is_empty() {
         code.push_str("struct Params {\n");
-        for (var_name, type_) in params {
+        for (var_name, type_) in uniform_types {
             writeln!(code, "    {}: {};", var_name, type_.wgsl_name()).unwrap();
         }
         code.push_str("};\n\n");
@@ -212,7 +225,7 @@ var t_diffuse: texture_2d<f32>;
 [[group(0), binding(1)]]
 var s_diffuse: sampler;",
     );
-    if !params.is_empty() {
+    if !uniform_types.is_empty() {
         code.push_str(
             "
 // Group 1 is the effect parameters
