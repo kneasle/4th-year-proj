@@ -199,6 +199,7 @@ impl Context {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        // TODO: Handle images who's rows aren't a multiple of 256 bytes long
         encoder.copy_texture_to_buffer(
             wgpu::ImageCopyTexture {
                 aspect: wgpu::TextureAspect::All,
@@ -240,7 +241,6 @@ impl Context {
     pub fn render(&mut self, image: &Image) {
         // Annotate the image with the `Rect`s covered by the intermediate textures
         let annotated_image = AnnotatedImage::new(self, image);
-        dbg!(&annotated_image);
         // Resize textures
         self.output_texture.resize(
             &self.device,
@@ -288,110 +288,92 @@ impl Context {
             }],
             depth_stencil_attachment: None, // Not using depth or stencil
         });
+        // Literally don't do anything with this render pass
     }
 
     /// Create the render/compute commands required to render a single layer of the image
     fn render_layer(&self, layer: &AnnotatedLayer, encoder: &mut wgpu::CommandEncoder) {
         let layer_source_texture = &self.layers[layer.source.source_id];
-        match layer.effects.as_slice() {
-            // If there are no effects, then we just copy the required section of the source layer
-            // TODO: We need to actually do a render pass here to handle alpha-blending properly
-            [] => encoder.copy_texture_to_texture(
-                wgpu::ImageCopyTexture {
-                    texture: &layer_source_texture,
-                    mip_level: 0, // We're not doing any mipmapping
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::ImageCopyTextureBase {
-                    texture: &self.output_texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                round_up_to_extent(layer.source_bbox.size()),
-            ),
-            effects => {
-                // Copy the required region of the source texture into the input for the first
-                // effect.  `effects.len() % 2` is used because `effect_idx = effect.len() - 1` for
-                // the bottom-most effect in the chain, so its input index is
-                // `(effects.len() - 1 + 1) % 2 = effects.len() % 2`.
-                //
-                // TODO: Sample directly from the source texture?  Not sure if this is actually
-                // useful; if we're going to implement texture chunking for efficient undo then
-                // this extra pass will be needed anyway to reconstruct the region we're interested
-                // in.
-                encoder.copy_texture_to_texture(
-                    wgpu::ImageCopyTextureBase {
-                        texture: &layer_source_texture,
-                        mip_level: 0, // Not using mipmapping
-                        origin: round_down_to_origin(layer.source_bbox.min()),
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    wgpu::ImageCopyTextureBase {
-                        texture: &self.intermediate_textures[effects.len() % 2],
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    round_up_to_extent(layer.source_bbox.size()),
-                );
 
-                // Apply effects in *reverse* order (i.e. bottom-most effect first).  Effects and
-                // layers are stored in the order they would be shown in a GUI.  NOTE that the
-                // indices also count down.
-                let mut effect_source_region = layer.source_bbox;
-                for (effect_idx, annot_effect) in effects.iter().enumerate().rev() {
-                    let effect_type = self
-                        .effect_types
-                        .get(&annot_effect.source.effect_name)
-                        .unwrap();
-                    effect_type.encode_commands(
-                        &annot_effect.source.params,
-                        TextureRegion {
-                            region: effect_source_region,
-                            texture: &self.intermediate_textures[(effect_idx + 1) % 2],
-                        },
-                        TextureRegion {
-                            region: annot_effect.out_bbox,
-                            texture: &self.intermediate_textures[effect_idx % 2],
-                        },
-                        encoder,
-                        &self.device,
-                    );
-                    // The source region for the next effect is the current effect's output
-                    // bounding box
-                    effect_source_region = annot_effect.out_bbox;
-                }
+        // Copy the required region of the source texture into the input for the first
+        // effect.  `effects.len() % 2` is used because `effect_idx = effect.len() - 1` for
+        // the bottom-most effect in the chain, so its input index is
+        // `(effects.len() - 1 + 1) % 2 = effects.len() % 2`.
+        //
+        // TODO: Sample directly from the source texture?  Not sure if this is actually
+        // useful; if we're going to implement texture chunking for efficient undo then
+        // this extra pass will be needed anyway to reconstruct the region we're interested
+        // in.
+        encoder.copy_texture_to_texture(
+            wgpu::ImageCopyTextureBase {
+                texture: &layer_source_texture,
+                mip_level: 0, // Not using mipmapping
+                origin: round_down_to_origin(layer.source_bbox.min()),
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::ImageCopyTextureBase {
+                texture: &self.intermediate_textures[layer.effects.len() % 2],
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            round_up_to_extent(layer.source_bbox.size()),
+        );
 
-                // After all the effects have been run, the final texture is stored in
-                // `self.intermediate_textures[0]`.  Therefore, we want to render that onto the
-                // output texture
-                //
-                // TODO: Take alpha blending into account
-                encoder.copy_texture_to_texture(
-                    wgpu::ImageCopyTexture {
-                        texture: &self.intermediate_textures[0],
-                        mip_level: 0, // We're not doing any mipmapping
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    wgpu::ImageCopyTextureBase {
-                        texture: &self.output_texture,
-                        mip_level: 0,
-                        origin: round_down_to_origin(effect_source_region.min()),
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    round_up_to_extent(effect_source_region.size()),
-                );
-            }
+        // Apply effects in *reverse* order (i.e. bottom-most effect first).  Effects and
+        // layers are stored in the order they would be shown in a GUI.  NOTE that the
+        // indices also count down.
+        let mut effect_source_region = layer.source_bbox;
+        for (effect_idx, annot_effect) in layer.effects.iter().enumerate().rev() {
+            let effect_type = self
+                .effect_types
+                .get(&annot_effect.source.effect_name)
+                .unwrap();
+            effect_type.encode_commands(
+                &annot_effect.source.params,
+                TextureRegion {
+                    region: effect_source_region,
+                    texture: &self.intermediate_textures[(effect_idx + 1) % 2],
+                },
+                TextureRegion {
+                    region: annot_effect.out_bbox,
+                    texture: &self.intermediate_textures[effect_idx % 2],
+                },
+                encoder,
+                &self.device,
+            );
+            // The source region for the next effect is the current effect's output
+            // bounding box
+            effect_source_region = annot_effect.out_bbox;
         }
+
+        // After all the effects have been run, the final texture is stored in
+        // `self.intermediate_textures[0]`.  Therefore, we want to render that onto the
+        // output texture
+        //
+        // TODO: Take alpha blending into account
+        encoder.copy_texture_to_texture(
+            wgpu::ImageCopyTexture {
+                texture: &self.intermediate_textures[0],
+                mip_level: 0, // We're not doing any mipmapping
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::ImageCopyTextureBase {
+                texture: &self.output_texture,
+                mip_level: 0,
+                origin: round_down_to_origin(effect_source_region.min()),
+                aspect: wgpu::TextureAspect::All,
+            },
+            round_up_to_extent(effect_source_region.size()),
+        );
     }
 }
 
 #[derive(Debug)]
 struct AnnotatedImage<'img> {
     layers: Vec<AnnotatedLayer<'img>>,
+    #[allow(dead_code)]
     source: &'img Image,
 }
 
