@@ -1,0 +1,79 @@
+\documentclass[12pt]{article}
+
+\begin{document}
+
+% Title page
+
+\begin{titlepage}
+    \begin{center}
+        \vspace*{2in}
+
+        \Huge
+        An Interesting Title
+
+        \vspace*{2in}
+
+        \Large
+
+        Trinity Term 2022
+
+        \vspace*{0.25in}
+        Candidate Number: \emph{1034710}
+
+        \vspace*{0.25in}
+        Masters in Computer Science
+    \end{center}
+\end{titlepage}
+
+
+
+\begin{center}
+    \large \textbf{Abstract}
+\end{center}
+
+This project concerns building a proof-of-concept for a general-purpose, non-destructive,
+GPU-accelerated image editor.  Let's break down exactly what these goals mean:
+
+Firstly, the image editor must be \emph{general purpose}.  This means that the user isn't restricted
+to a specific work flow (like adjusting photos) --- the image editor must have a flexible internal
+representation that allows the user to creatively manipulate images in whatever way they want.
+
+Secondly, all the image effects must be \emph{non-destructive}.  A `destructive' image effect is one
+which, when applied to a layer, overwrites the source layer.  Thus, the source layer is destroyed.
+From a user experience (often shortened to UX) perspective, this is very undesirable; if, for
+example, you were to apply a blur followed by colour correction, there would be no way to adjust the
+blur because the source layer has been destroyed by both the blur and the colour correction.
+
+If image effects are non-destructive, then it has to be the case that the user can change an effect
+at the bottom of a stack of effects and the editor must recompute all the effects above it.  For the
+ideal user experience, this must all be processed within a frame so that the delay isn't
+perceptible.  To target 60 frames per second, an editor must process every update in less than
+16.6ms --- including processing and rendering the GUI.  The only way to realistically achieve such
+low latencies is to do \emph{all} the image processing on the GPU.  Thus, our editor is
+\emph{GPU-accelerated}.
+
+\pagebreak
+
+\section{State of the Art}
+
+The current ecosystem of image editing is overwhelmingly dominated by two applications: Adobe
+Photoshop, which needs no introduction; and the GNU Image Manipulation Program (GIMP), which is a
+free and open source general-purpose image editor.  Both of these do their processing primarily on
+the CPU, but both can sometimes utilise GPUs for some effects.  In GIMP, GPU acceleration is a
+(very) experimental feature so for all intents and purposes, GIMP is still 100\% CPU-bound.
+
+It makes sense that both these make very light use of GPUs, because they were both first released
+over two decades ago (GIMP in 2002 and Photoshop in 1995), a time when GPUs were almost completely
+exclusive to game/arcade consoles and were hard wired for 3D rendering exclusively.
+
+There is a big disadvantage to only providing GPU acceleration for some parts of the process:
+transferring data between the CPU and GPU is much, much slower than reading/writing data only on the
+GPU.
+
+\subsection{Darktable}
+
+Darktable is an open source `photography workflow application' which features non-destructive
+editing which can be performed entirely on the GPU.  As such, it satisfies two of our goals but
+isn't general-purpose (it's only designed for making small adjustments to photos).
+
+\end{document}
