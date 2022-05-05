@@ -54,6 +54,84 @@ low latencies is to do \emph{all} the image processing on the GPU.  Thus, our ed
 
 \pagebreak
 
+
+
+\section{Background}
+
+\subsection{Image Processing 101}
+
+Image editors will largely be performing one of three types of operation:
+
+\begin{enumerate}
+    \item Per-pixel effects, where each pixel in the output is a simple function of either the same
+        pixel in the input (e.g.\ brightness/contrast, hue/saturation/value) or the pixels near it
+        (e.g.\ pick/hurl noise, edge detect/sharpen, small blurs).
+    \item Transformations, where the image is translated, rotated or distorted in some way.
+    \item Compositing, where a large number of `layers' are merged to form one final image.
+\end{enumerate}
+
+All three of these are embarrassingly parallel --- in each case, every pixel of the output can be
+computed independently to all the others.
+
+There are some image processing effects (like the various kinds of blur) which aren't as obviously
+parallelisable, but there is still parallelisation opportunities (like computing 2D Gaussian blur by
+combining horizontal and vertical blur passes, where each row/column is independent).
+
+
+
+\subsection{Methods of Processing Images}
+
+In a typical consumer computer, there are two main computation units which could be used for
+processing images:
+
+\subsubsection{The Central Processing Unit (CPU)}
+
+Every computer contains a main processor (the CPU), which is optimised for performing general
+computations on the same data.  There is some parallelisation available (according to Steam's
+Hardware Survey, CPUs have an average of 4.9 cores, as of April 2022), but these are mainly fast at
+sequential processing.
+
+Because of this, it's obvious that the CPU is a pretty inappropriate device for image processing.
+The saving grace is that CPUs tend to have extremely high clock speeds and, with multiple cores and
+SIMD, can perform upwards of 32 individual operations in parallel\footnote{This is assuming four
+cores, each of which can perform operations on eight 32-bit floating-point SIMD lanes in a 256-bit
+AVX register.  However, limitations like memory speed and the sharing of functional units (thus
+causing logically different threads to contest for the same hardware) make this theoretical limit
+very difficult to reach in practice.}, which is fast enough that CPU-based processing is
+\emph{passable} but the latency and throughput are far from ideal.  Additionally, other CPU-bound
+tasks (including GUI layout) all take time away from the image processing.
+
+\subsubsection{The Graphics Processing Unit (GPU)}
+
+Almost all computers also contain a secondary processor, who's sole purpose is to accelerate
+graphics processing with a low latency and high throughput (it needs to recompute the contents of
+the display at roughly 60 frames per second).
+
+Some form of GPU is present in nearly every consumer device, with even low-powered mobile devices
+featuring GPUs integrated into the same piece of silicon as the CPU.  Therefore, we can confidently
+rely on graphics acceleration being present when writing consumer applications.  Note that this has
+only recently been the case --- over the last two decades, rising screen resolutions and refresh
+rates made dedicated graphics processing go from exclusive to gaming to being ubiquitous.
+
+GPUs have two major processing modes:
+
+\paragraph{Render passes:} Typically, a render pass involves taking 3D geometry, applying some
+arbitrary transformation to the vertices, then performing some computation on every pixel of the
+screen to compute its colour.  This is what GPUs are primarily designed for (since it's what games
+need), and is therefore GPUs have had many decades of optimisation relating to rendering
+efficiently.  Because rendering is a GPU's primary purpose, it means that render passes are
+available on any GPU.  Render passes are thus extremely portable.
+
+\paragraph{Compute passes:} More recently, the raw power of GPUs has made people want to use them as
+general purpose computing devices.  Any highly parallel tasks are very well suited to GPU
+acceleration, including machine learning and (in our case) image processing.  Therefore, recent GPUs
+can run arbitrary code on the same cores that would be used for rendering.  This has given rise to
+General Purpose GPU (GPGPU) computing, which heavily utilises this ability.  Compute passes are
+useful for doing operations that can't easily be represented as per-pixel operations, like
+simulations or more complex image effects such as Gaussian blur.
+
+
+
 \section{State of the Art}
 
 The current ecosystem of image editing is overwhelmingly dominated by two applications: Adobe
@@ -75,5 +153,30 @@ GPU.
 Darktable is an open source `photography workflow application' which features non-destructive
 editing which can be performed entirely on the GPU.  As such, it satisfies two of our goals but
 isn't general-purpose (it's only designed for making small adjustments to photos).
+
+Darktable uses OpenCL for its compute, which is also used by GIMP's experimental GPU acceleration.
+OpenCL is presumably used because it can fall back on CPU processing if needed, without having to
+write all the image processing code twice.  However, OpenCL is optimised largely for throughput, and
+is therefore less suitable for latency-sensitive projects like this one.  Additionally, OpenCL will
+only generate compute shaders, but GPUs are primarily optimised for rendering games
+
+
+
+\section{Implementation}
+
+
+
+\section{Measurement Methodology}
+
+\section{Results}
+
+\section{Conclusion}
+
+
+
+\pagebreak
+
+\begin{thebibliography}{9}
+\end{thebibliography}
 
 \end{document}
