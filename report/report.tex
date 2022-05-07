@@ -1,5 +1,7 @@
 \documentclass[12pt]{article}
 
+\usepackage{amssymb}
+
 \begin{document}
 
 % Title page
@@ -52,9 +54,15 @@ perceptible.  To target 60 frames per second, an editor must process every updat
 low latencies is to do \emph{all} the image processing on the GPU.  Thus, our editor is
 \emph{GPU-accelerated}.
 
+
+
 \pagebreak
 
+\tableofcontents
 
+
+
+\pagebreak
 
 \section{Background}
 
@@ -88,24 +96,24 @@ processing images:
 
 Every computer contains a main processor (the CPU), which is optimised for performing general
 computations on the same data.  There is some parallelisation available (according to Steam's
-Hardware Survey, CPUs have an average of 4.9 cores, as of April 2022), but these are mainly fast at
-sequential processing.
+Hardware Survey, CPUs have an average of 4.9 cores, as of April 2022), but these are optimised for
+fast sequential processing rather than high parallelism.
 
 Because of this, it's obvious that the CPU is a pretty inappropriate device for image processing.
-The saving grace is that CPUs tend to have extremely high clock speeds and, with multiple cores and
-SIMD, can perform upwards of 32 individual operations in parallel\footnote{This is assuming four
-cores, each of which can perform operations on eight 32-bit floating-point SIMD lanes in a 256-bit
-AVX register.  However, limitations like memory speed and the sharing of functional units (thus
-causing logically different threads to contest for the same hardware) make this theoretical limit
-very difficult to reach in practice.}, which is fast enough that CPU-based processing is
-\emph{passable} but the latency and throughput are far from ideal.  Additionally, other CPU-bound
-tasks (including GUI layout) all take time away from the image processing.
+The saving grace is that CPUs tend to have extremely high clock speeds and some degree of
+parallelism: with multiple cores and SIMD, can perform upwards of 32 individual operations in
+parallel\footnote{This is assuming four cores, each of which can perform operations on eight 32-bit
+floating-point SIMD lanes in a 256-bit AVX register.  However, limitations like memory speed and the
+sharing of functional units (thus causing logically different threads to contest for the same
+hardware) make this theoretical limit very difficult to reach in practice.}.  This is fast enough
+that CPU-based processing is \emph{passable} but the latency and throughput are both far from ideal.
+Additionally, other CPU-bound tasks (including GUI layout) all take time away from the image
+processing.
 
 \subsubsection{The Graphics Processing Unit (GPU)}
 
-Almost all computers also contain a secondary processor, who's sole purpose is to accelerate
-graphics processing with a low latency and high throughput (it needs to recompute the contents of
-the display at roughly 60 frames per second).
+Almost all modern computers also contain a secondary processor, the Graphics Processing Unit (GPU),
+who's sole purpose is to accelerate graphics processing with a low latency and high throughput.
 
 Some form of GPU is present in nearly every consumer device, with even low-powered mobile devices
 featuring GPUs integrated into the same piece of silicon as the CPU.  Therefore, we can confidently
@@ -130,23 +138,117 @@ General Purpose GPU (GPGPU) computing, which heavily utilises this ability.  Com
 useful for doing operations that can't easily be represented as per-pixel operations, like
 simulations or more complex image effects such as Gaussian blur.
 
+\subsection{Comparison of Compute APIs}
+
+\subsubsection{CPU Compute (No API Needed)}
+
+Computing images on the CPU is extremely simple, requiring no extra effort or clever APIs.  Source
+images are loaded from disk into the CPU's memory as an array of pixel values.  Operations can then
+be performed on those pixels using a plain \verb|for| loop.  Parallelisation can be achieved
+using a combination of SIMD and multi-threading (splitting the pixels into chunks and having
+different CPU cores process those chunks in parallel).  As described above, CPUs are easy to program
+for but are quite ill-suited to the heavily parallel operations found in image processing.
+
+\subsubsection{Graphics Libraries}
+
+Directly controlling GPUs is clearly an unsustainable task, since you would be forced to deal with
+the differences between every GPU.  To avoid this issue, operating systems vendors (like Apple and
+Microsoft) or the Khronos Group\footnote{https://www.khronos.org/} create APIs which provide users
+with a simpler abstraction for the GPU, and require that GPU vendors implement that API in the GPU's
+drivers.
+
+The oldest and most well-known graphics API is OpenGL\footnote{https://www.opengl.org/}.  OpenGL is
+very high-level, which makes it easy to use for simple cases (like making games) but lacks the
+low-level control required for achieving high performance in more obscure cases (like image
+editors).
+
+To overcome this, Khronos released Vulkan\footnote{https://www.vulkan.org/} as a successor to
+OpenGL, whilst Apple released Metal\footnote{https://developer.apple.com/metal/} and Microsoft
+released DirectX\footnote{https://en.wikipedia.org/wiki/DirectX}.  All of these favour a lower-level
+approach, requiring more code from their users but allowing a much higher performance ceiling.
+
+Until 2018, OpenGL and Vulkan where fully supported by all major operating systems (Windows, macOS,
+Linux, iOS and Android).  In 2018, Apple announced that they would be deprecating OpenGL (along with
+Vulkan and OpenCL) to encourage developers to use Metal.  As of 2022, OpenGL, Vulkan and OpenCL all
+still work on Apple devices, but it's unclear for how long this will continue.  Code using Vulkan
+can be used on Apple devices by using MoltenVK\footnote{https://github.com/KhronosGroup/MoltenVK} to
+translate Vulkan function calls into Metal at runtime.  Similarly,
+MoltenGL\footnote{https://moltengl.com/moltengl/} provides support for OpenGL, but both of these
+only implement a subset of their corresponding APIs and are less than ideal.  The compatibility of
+various APIs (along with OpenCL, discussed in Section~\ref{sec:open-cl}) is summarised in
+Figure~\ref{fig:apis-vs-oses}.
+
+\begin{figure}
+    \begin{center}
+        \begin{tabular}{ c | c c c c c }
+                    & Windows & macOS & Linux & iOS & Android \\
+            \hline
+            OpenCL  & \checkmark & deprecated   & \checkmark & deprecated   & \checkmark \\
+            OpenGL  & \checkmark & via MoltenGL & \checkmark & via MoltenGL & \checkmark \\
+            Vulkan  & \checkmark & via MoltenVK & \checkmark & via MoltenVK & \checkmark \\
+            Metal   &            & \checkmark   &            & \checkmark \\
+            DirectX & \checkmark \\
+        \end{tabular}
+    \end{center}
+    \caption{Compatibility table of APIs against major operating systems.  iOS and Android are less
+       relevant to image editors, but are included for completeness.}\label{fig:apis-vs-oses}
+\end{figure}
+
+\subsubsection{OpenCL}\label{sec:open-cl}
+
+OpenCL\footnote{https://www.khronos.org/opencl/} is a framework for running general compute
+operations on any hardware, again standardised by the Khronos Group.  OpenCL lets you
+write C or C++ code once, then delegate that code to any compute device at runtime.  Thus, the
+compute code only needs to be written once.
+
+Apple has also deprecated OpenCL, but, as far as I'm aware, no one has yet made a compatibility
+layer like MoltenVK or MoltenGL.  Also, OpenCL always uses compute passes, potentially missing out
+on performance in tasks where render passes would be much faster (such as compositing).
+
+\subsubsection{WebGPU}
+
+WebGPU\footnote{https://www.w3.org/TR/webgpu/} is an in-progress standard to give web applications
+low-level but safe access to GPU acceleration.  WebGPU implements a common subset of Vulkan, Metal
+and DirectX to give it extremely good portability.  A Rust library,
+\verb|wgpu|\footnote{https://github.com/gfx-rs/wgpu}, implements the WebGPU specification in a way
+callable from languages other than JavaScript.  \verb|wgpu| forms the core of Firefox's WebGPU
+implementation, and is therefore extremely well-tested and stable.
 
 
-\section{State of the Art}
 
-The current ecosystem of image editing is overwhelmingly dominated by two applications: Adobe
-Photoshop, which needs no introduction; and the GNU Image Manipulation Program (GIMP), which is a
-free and open source general-purpose image editor.  Both of these do their processing primarily on
-the CPU, but both can sometimes utilise GPUs for some effects.  In GIMP, GPU acceleration is a
-(very) experimental feature so for all intents and purposes, GIMP is still 100\% CPU-bound.
+\pagebreak
 
-It makes sense that both these make very light use of GPUs, because they were both first released
-over two decades ago (GIMP in 2002 and Photoshop in 1995), a time when GPUs were almost completely
-exclusive to game/arcade consoles and were hard wired for 3D rendering exclusively.
+\section{State of the Art} % TODO: Should I call this 'Existing Editors'
 
-There is a big disadvantage to only providing GPU acceleration for some parts of the process:
-transferring data between the CPU and GPU is much, much slower than reading/writing data only on the
-GPU.
+\subsection{Adobe Photoshop}
+
+Used by an estimated 26 million users
+world-wide\footnote{https://prodesigntools.com/number-of-creative-cloud-subscribers.html}, including
+90\% of the world's creative
+professionals\footnote{https://www.adobe.com/about-adobe/fast-facts.html}, Adobe
+Photoshop\footnote{https://www.adobe.com/uk/products/photoshop.html} is the
+undisputed king of image editing.
+
+TODO: Section about destructive effects
+
+\subsubsection{GPU Acceleration}
+
+Photoshop runs almost all of its image processing on the CPU.  As of 2022, nine operations benefit from
+GPU acceleration, whilst a further eight require a
+GPU\footnote{https://prodesigntools.com/number-of-creative-cloud-subscribers.html}.  It makes sense
+that the Photoshop is not built with GPUs in mind --- the first version of Photoshop was released in
+1990\footnote{https://en.wikipedia.org/wiki/Adobe\_Photoshop}, nine years before the first consumer
+GPU (Nvidia's GeForce 256) reached the market\footnote{https://en.wikipedia.org/wiki/GeForce\_256}.
+
+Without access to Photoshop's source code, it's unclear exactly what compute APIs are being used for
+these GPU-accelerated effects.  Photoshop has settings for OpenCL, OpenGL, Vulkan and Metal, so I
+can only assume that a combination of all these are used.  So, in summary, Photoshop appears to use
+a mixture of CPU, GPU compute and GPU rendering, heavily dominated by CPU.
+
+\subsection{GNU Image Manipulation Program (GIMP)}
+
+The GNU Image Manipulation Program\footnote{https://gimp.org} (shortened to GIMP) is a free and open
+source general-purpose image editor.
 
 \subsection{Darktable}
 
@@ -176,7 +278,7 @@ only generate compute shaders, but GPUs are primarily optimised for rendering ga
 
 \pagebreak
 
-\begin{thebibliography}{9}
+\begin{thebibliography}{99}
 \end{thebibliography}
 
 \end{document}

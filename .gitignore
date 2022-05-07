@@ -13,3 +13,4 @@ callgrind*
 *.log
 *.pdf
 *.synctex.gz
+*.toc
