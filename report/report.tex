@@ -262,7 +262,13 @@ professionals\footnote{https://www.adobe.com/about-adobe/fast-facts.html}, Adobe
 Photoshop\footnote{https://www.adobe.com/uk/products/photoshop.html} is the
 undisputed king of image editing.
 
-TODO: Section about destructive effects
+\subsubsection{Non-Destructive Editing}
+
+Since the introduction of Smart
+Objects\footnote{https://helpx.adobe.com/photoshop/using/create-smart-objects.html} (and the
+corresponding Smart Filters), Photoshop has been able to implement most filters non-destructively.
+These are all computed on the CPU, though, so extensive use of Smart Filters will often cause
+Photoshop to noticeably slow down.
 
 \subsubsection{GPU Acceleration}
 
@@ -276,24 +282,37 @@ GPU (Nvidia's GeForce 256) reached the market\footnote{https://en.wikipedia.org/
 Without access to Photoshop's source code, it's unclear exactly what compute APIs are being used for
 these GPU-accelerated effects.  Photoshop has settings for OpenCL, OpenGL, Vulkan and Metal, so I
 can only assume that a combination of all these are used.  So, in summary, Photoshop appears to use
-a mixture of CPU, GPU compute and GPU rendering, heavily dominated by CPU.
+largely CPU, with a small amount of GPU compute passes and GPU rendering passes.
 
 \subsection{GNU Image Manipulation Program (GIMP)}
 
 The GNU Image Manipulation Program\footnote{https://gimp.org} (shortened to GIMP) is a free and open
 source general-purpose image editor.
 
+\subsubsection{Non-Destructive Editing}
+
+As of 2022, all filters in GIMP are destructive, so there is no way to do non-destructive editing.
+There is a plan to implement non-destructive
+editing\footnote{https://www.gimp.org/docs/userfaq.html\#when-will-gimp-support-any-kind-of-non-destructive-editing-like-adjustment-layers-layer-filters-andor-full-blown-node-based-editing}
+but that has not yet come to fruition.  This appears to be a really huge task, because GIMP is not
+written with non-destructive editing in mind.
+
+\subsubsection{GPU Acceleration}
+
+GIMP has experimental support for GPU acceleration via OpenCL (first released in
+2.10.0\footnote{https://www.gimp.org/news/2018/04/27/gimp-2-10-0-released/} in April 2018).  As of
+2022, this is still experimental and is sometimes slower than CPU-based processing.  So, for most
+users, GIMP is 100\% CPU-bound.
+
 \subsection{Darktable}
 
-Darktable is an open source `photography workflow application' which features non-destructive
-editing which can be performed entirely on the GPU.  As such, it satisfies two of our goals but
-isn't general-purpose (it's only designed for making small adjustments to photos).
+Darktable\footnote{https://www.darktable.org/} is an open source `photography workflow application'
+which features non-destructive editing which can be performed entirely on the GPU.  The only thing
+really missing is that Darktable only supports a fixed pipeline of filters, rather than allowing the
+user to choose how to compose them (this makes sense, because Darktable is only intended to be used
+for adjusting photos).  Finally, Darktable uses OpenCL which, as described above in
+Section~\ref{sec:open-cl}, may miss out on performance improvements from using GPU render passes.
 
-Darktable uses OpenCL for its compute, which is also used by GIMP's experimental GPU acceleration.
-OpenCL is presumably used because it can fall back on CPU processing if needed, without having to
-write all the image processing code twice.  However, OpenCL is optimised largely for throughput, and
-is therefore less suitable for latency-sensitive projects like this one.  Additionally, OpenCL will
-only generate compute shaders, but GPUs are primarily optimised for rendering games
 
 
 
