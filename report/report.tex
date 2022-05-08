@@ -64,6 +64,39 @@ low latencies is to do \emph{all} the image processing on the GPU.  Thus, our ed
 
 \pagebreak
 
+\section{Introduction}
+
+When image editing, the user's mental model of an edited image corresponds to a sequence of layers,
+which are conceptually source.  Each layer can be passed through any number of `filters', which
+modify these layers.  The `filtered' version of the layers are finally merged (or `composited')
+together to form the final `composite' image.
+
+The ideal user experience for an image editor is one where the editor directly exposes precisely
+this model and, when the user makes changes, instantly updates the image in the screen.  Here
+`instant' means that the update latency is imperceptible, ideally within 16.6ms so that the new
+image can be rendered in the same frame as the UI updates (assuming 60 frames per second).
+
+Existing programs like Adobe Photoshop and Darktable shows us that fully non-destructive editing is
+entirely possible, but recomputing the image within a frame requires an enormous amount of
+computation.  Fortunately, almost all modern consumer computers contain extremely capable graphics
+processing units (GPUs), which are designed to be extremely fast at highly parallel workloads such
+as image processing.  Even better, video game developers have spent decades working on minimising
+latency of GPU operations.  Image processing is very computationally intensive but embarrassingly
+parallel, so, to perform this much computation with low latency, I propose running \emph{all} of the
+compute work on the same GPU that drives the user's display.
+
+This project aims to determine the feasibility of a fully non-destructive, fully GPU-accelerated
+image editor.  To do so, I have implemented a simple `core' of an image editor, and used this to
+measure the latency of full GPU processing.  There are many further optimisations that could be
+done, but they will not change the performance enough to change the feasibility result (TODO: Update
+this once I actually have results).
+
+TODO: Results
+
+
+
+\pagebreak
+
 \section{Background}
 
 \subsection{Image Processing 101}
