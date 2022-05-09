@@ -208,8 +208,8 @@ can be used on Apple devices by using MoltenVK\footnote{https://github.com/Khron
 translate Vulkan function calls into Metal at runtime.  Similarly,
 MoltenGL\footnote{https://moltengl.com/moltengl/} provides support for OpenGL, but both of these
 only implement a subset of their corresponding APIs and are less than ideal.  The compatibility of
-various APIs (along with OpenCL, discussed in Section~\ref{sec:open-cl}) is summarised in
-Figure~\ref{fig:apis-vs-oses}.
+various APIs, along with OpenCL (discussed in Section~\ref{sec:open-cl}) and WebGPU (discussed in
+Section~\ref{sec:wgpu}), is summarised in Figure~\ref{fig:apis-vs-oses}.
 
 \begin{figure}
     \begin{center}
@@ -217,10 +217,12 @@ Figure~\ref{fig:apis-vs-oses}.
                     & Windows & macOS & Linux & iOS & Android \\
             \hline
             OpenCL  & \checkmark & deprecated   & \checkmark & deprecated   & \checkmark \\
-            OpenGL  & \checkmark & via MoltenGL & \checkmark & via MoltenGL & \checkmark \\
-            Vulkan  & \checkmark & via MoltenVK & \checkmark & via MoltenVK & \checkmark \\
+            OpenGL  & \checkmark & subset       & \checkmark & subset       & \checkmark \\
+            Vulkan  & \checkmark & subset       & \checkmark & subset       & \checkmark \\
             Metal   &            & \checkmark   &            & \checkmark \\
             DirectX & \checkmark \\
+            \hline
+            WebGPU & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark
         \end{tabular}
     \end{center}
     \caption{Compatibility table of APIs against major operating systems.  iOS and Android are less
@@ -238,7 +240,7 @@ Apple has also deprecated OpenCL, but, as far as I'm aware, no one has yet made 
 layer like MoltenVK or MoltenGL.  Also, OpenCL always uses compute passes, potentially missing out
 on performance in tasks where render passes would be much faster (such as compositing).
 
-\subsubsection{WebGPU}
+\subsubsection{WebGPU}\label{sec:wgpu}
 
 WebGPU\footnote{https://www.w3.org/TR/webgpu/} is an in-progress standard to give web applications
 low-level but safe access to GPU acceleration.  WebGPU implements a common subset of Vulkan, Metal
