@@ -37,20 +37,20 @@ This project concerns building a proof-of-concept for a general-purpose, non-des
 GPU-accelerated image editor.  Let's break down exactly what these goals mean:
 
 Firstly, the image editor must be \emph{general purpose}.  This means that the user isn't restricted
-to a specific work flow (like adjusting photos) --- the image editor must have a flexible internal
+to a specific work flow (like adjusting photos)---the image editor must have a flexible internal
 representation that allows the user to creatively manipulate images in whatever way they want.
 
-Secondly, all the image effects must be \emph{non-destructive}.  A `destructive' image effect is one
+Secondly, all image filters must be \emph{non-destructive}.  A `destructive' image filter is one
 which, when applied to a layer, overwrites the source layer.  Thus, the source layer is destroyed.
 From a user experience (often shortened to UX) perspective, this is very undesirable; if, for
 example, you were to apply a blur followed by colour correction, there would be no way to adjust the
 blur because the source layer has been destroyed by both the blur and the colour correction.
 
-If image effects are non-destructive, then it has to be the case that the user can change an effect
-at the bottom of a stack of effects and the editor must recompute all the effects above it.  For the
+If image filters are non-destructive, then it has to be the case that the user can change an filter
+at the bottom of a stack of filters and the editor must recompute all the filters above it.  For the
 ideal user experience, this must all be processed within a frame so that the delay isn't
 perceptible.  To target 60 frames per second, an editor must process every update in less than
-16.6ms --- including processing and rendering the GUI.  The only way to realistically achieve such
+16.6ms---including processing and rendering the GUI.  The only way to realistically achieve such
 low latencies is to do \emph{all} the image processing on the GPU.  Thus, our editor is
 \emph{GPU-accelerated}.
 
@@ -104,17 +104,17 @@ TODO: Results
 Image editors will largely be performing one of three types of operation:
 
 \begin{enumerate}
-    \item Per-pixel effects, where each pixel in the output is a simple function of either the same
+    \item Per-pixel filters, where each pixel in the output is a simple function of either the same
         pixel in the input (e.g.\ brightness/contrast, hue/saturation/value) or the pixels near it
         (e.g.\ pick/hurl noise, edge detect/sharpen, small blurs).
     \item Transformations, where the image is translated, rotated or distorted in some way.
     \item Compositing, where a large number of `layers' are merged to form one final image.
 \end{enumerate}
 
-All three of these are embarrassingly parallel --- in each case, every pixel of the output can be
+All three of these are embarrassingly parallel---in each case, every pixel of the output can be
 computed independently to all the others.
 
-There are some image processing effects (like the various kinds of blur) which aren't as obviously
+There are some image filters (like the various kinds of blur) which aren't as obviously
 parallelisable, but there is still parallelisation opportunities (like computing 2D Gaussian blur by
 combining horizontal and vertical blur passes, where each row/column is independent).
 
@@ -151,7 +151,7 @@ who's sole purpose is to accelerate graphics processing with a low latency and h
 Some form of GPU is present in nearly every consumer device, with even low-powered mobile devices
 featuring GPUs integrated into the same piece of silicon as the CPU.  Therefore, we can confidently
 rely on graphics acceleration being present when writing consumer applications.  Note that this has
-only recently been the case --- over the last two decades, rising screen resolutions and refresh
+only recently been the case---over the last two decades, rising screen resolutions and refresh
 rates made dedicated graphics processing go from exclusive to gaming to being ubiquitous.
 
 GPUs have two major processing modes:
@@ -169,7 +169,7 @@ acceleration, including machine learning and (in our case) image processing.  Th
 can run arbitrary code on the same cores that would be used for rendering.  This has given rise to
 General Purpose GPU (GPGPU) computing, which heavily utilises this ability.  Compute passes are
 useful for doing operations that can't easily be represented as per-pixel operations, like
-simulations or more complex image effects such as Gaussian blur.
+simulations or more complex filters such as Gaussian blur.
 
 \subsection{Comparison of Compute APIs}
 
@@ -275,12 +275,12 @@ Photoshop to noticeably slow down.
 Photoshop runs almost all of its image processing on the CPU.  As of 2022, nine operations benefit from
 GPU acceleration, whilst a further eight require a
 GPU\footnote{https://prodesigntools.com/number-of-creative-cloud-subscribers.html}.  It makes sense
-that the Photoshop is not built with GPUs in mind --- the first version of Photoshop was released in
+that the Photoshop is not built with GPUs in mind---the first version of Photoshop was released in
 1990\footnote{https://en.wikipedia.org/wiki/Adobe\_Photoshop}, nine years before the first consumer
 GPU (Nvidia's GeForce 256) reached the market\footnote{https://en.wikipedia.org/wiki/GeForce\_256}.
 
 Without access to Photoshop's source code, it's unclear exactly what compute APIs are being used for
-these GPU-accelerated effects.  Photoshop has settings for OpenCL, OpenGL, Vulkan and Metal, so I
+these GPU-accelerated filters.  Photoshop has settings for OpenCL, OpenGL, Vulkan and Metal, so I
 can only assume that a combination of all these are used.  So, in summary, Photoshop appears to use
 largely CPU, with a small amount of GPU compute passes and GPU rendering passes.
 
