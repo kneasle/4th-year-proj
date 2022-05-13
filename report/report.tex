@@ -1,6 +1,19 @@
 \documentclass[12pt]{article}
 
 \usepackage{amssymb}
+\usepackage{rotating}
+\usepackage{tikz}
+\usepackage{graphicx}
+\usepackage{xcolor}
+
+\usetikzlibrary{shapes.geometric, arrows}
+\graphicspath{ {./images/} }
+
+\tikzstyle{block} = [
+    rectangle, rounded corners, minimum width=5cm, minimum height=0.8cm,
+    text centered, draw=black
+]
+\tikzstyle{arrow} = [thick,->,>=stealth]
 
 \begin{document}
 
@@ -108,8 +121,19 @@ Image editors will largely be performing one of three types of operation:
         pixel in the input (e.g.\ brightness/contrast, hue/saturation/value) or the pixels near it
         (e.g.\ pick/hurl noise, edge detect/sharpen, small blurs).
     \item Transformations, where the image is translated, rotated or distorted in some way.
-    \item Compositing, where a large number of `layers' are merged to form one final image.
+    \item Compositing, where a large number of `layers' are merged to form one final image.  See
+        Figure~\ref{fig:compositing}.
 \end{enumerate}
+
+\begin{figure}
+    \begin{center}
+        \includegraphics[width=0.6\textwidth]{compositing}
+    \end{center}
+    \caption{Compositing layers.  A base image is combined with a new layer (which only covers part
+    of the image) to form a new image, with the new layer `above' the existing image.  Note how the
+    top-left corner of the `new' image has overwritten the corner of the texture in base
+    image.}\label{fig:compositing}
+\end{figure}
 
 All three of these are embarrassingly parallel---in each case, every pixel of the output can be
 computed independently to all the others.
@@ -127,10 +151,10 @@ processing images:
 
 \subsubsection{The Central Processing Unit (CPU)}
 
-Every computer contains a main processor (the CPU), which is optimised for performing general
-computations on the same data.  There is some parallelisation available (according to Steam's
-Hardware Survey, CPUs have an average of 4.9 cores, as of April 2022), but these are optimised for
-fast sequential processing rather than high parallelism.
+Every computer contains a primary processor (the CPU), which is optimised for performing general
+computations on relatively small amounts of data.  There is some parallelisation available
+(according to Steam's Hardware Survey, CPUs have an average of 4.9 cores, as of April 2022), but
+these are optimised for fast sequential processing rather than high parallelism.
 
 Because of this, it's obvious that the CPU is a pretty inappropriate device for image processing.
 The saving grace is that CPUs tend to have extremely high clock speeds and some degree of
@@ -283,7 +307,7 @@ GPU (Nvidia's GeForce 256) reached the market\footnote{https://en.wikipedia.org/
 
 Without access to Photoshop's source code, it's unclear exactly what compute APIs are being used for
 these GPU-accelerated filters.  Photoshop has settings for OpenCL, OpenGL, Vulkan and Metal, so I
-can only assume that a combination of all these are used.  So, in summary, Photoshop appears to use
+can only assume that a combination of all four are used.  So, in summary, Photoshop appears to use
 largely CPU, with a small amount of GPU compute passes and GPU rendering passes.
 
 \subsection{GNU Image Manipulation Program (GIMP)}
@@ -313,14 +337,293 @@ which features non-destructive editing which can be performed entirely on the GP
 really missing is that Darktable only supports a fixed pipeline of filters, rather than allowing the
 user to choose how to compose them (this makes sense, because Darktable is only intended to be used
 for adjusting photos).  Finally, Darktable uses OpenCL which, as described above in
-Section~\ref{sec:open-cl}, may miss out on performance improvements from using GPU render passes.
+Section~\ref{sec:open-cl}, may miss out on performance improvements from using GPU render passes (as
+well as being less portable).
 
 
 
+\pagebreak
 
 \section{Implementation}
 
+\subsection{Technologies Used}
 
+The editing library is written in Rust, using \verb|wgpu| (see Section~\ref{sec:wgpu}) as the
+graphics API\@.  \verb|wgpu| is an excellent library for this purpose---it provides low-level
+control of the GPU in a way that is safe and runs on any major platform.  Not using native APIs
+directly does create some overhead, but for a proof of concept the difference is negligible and the
+portability and ease of use easily outweigh any small performance hit.  At any rate, there are many
+better ways to optimise the prototype than using a faster graphics library.
+
+I also used WGSL (WebGPU's shading language) to write the shaders for the filters.  GLSL would
+potentially have been easier, but it's easier to understand how WGSL interact with \verb|wgpu|.
+
+Finally, this report is written in \LaTeX\ and the 3D diagrams were made using a combination of
+Blender\footnote{https://www.blender.org/} and GIMP\footnote{https://gimp.org/}.
+
+\subsection{Notable Omissions}
+
+This project is concerned with proving a concept rather than with building a viable image editor so, as
+such, I have chosen not to implement many features that would be expected of a real image editor but
+would not change the feasibility of a fully GPU-accelerated image editor.  Here, I will quickly
+justify a few major omissions:
+
+\subsubsection{Gaussian Blur and Other Blurs}
+
+Running Gaussian blur efficiently on GPUs has been very thoroughly
+researched\footnote{https://venturebeat.com/2017/07/13/an-investigation-of-fast-real-time-gpu-based-image-blur-algorithms/}
+because of the applications in video games (for filters like bloom and depth of field) and the best
+algorithms, while slower than simple per-pixel filters, are very fast.  Approximation techniques
+such as Kawase blur and Dual
+blur\footnote{https://community.arm.com/cfs-file/\_\_key/communityserver-blogs-components-weblogfiles/00-00-00-20-66/siggraph2015\_2D00\_mmg\_2D00\_marius\_2D00\_notes.pdf}
+give extremely good-looking results very quickly.  Other blur-like operations (bloom, motion blur,
+glare, etc.) are also prevalent in video games and Kawase blur can also be used to compute these
+efficiently.
+
+\subsubsection{Brushes and Undo/Redo}
+
+Brush systems and handling undo/redo are simply out of scope.  Both are, in their own right, worthy
+of a research project but \emph{this} project is concerned with measuring the speed of processing
+image filters (which can need to be done every frame).  Handling brushes and undo/redo are unlikely
+to have much impact on this because they both involve occasionally modifying the source image
+textures.
+
+Similarly, implementing a GUI is also out of scope.
+
+\subsubsection{Caching}
+
+Strategically caching the intermediate results of computations is a very effective way of reducing
+the time required to update an image.  It is also particularly effective in practice, since when the
+user makes lots of consecutive edits, they are almost always applied \emph{in the same place} of the
+tree.
+
+For example, think about the user dragging a slider in a filter.  This will cause the image to
+update nearly every frame, but all these updates will always change the same filter.  Therefore,
+each frame the editor only has to recompute the filters on the path from the change to the root.
+TODO: Add picture of this?
+
+Whilst extremely effective, introducing caching makes the whole system substantially more complex.
+It also doesn't make the performance any easier to evaluate---we are principally interested in
+\emph{how much} image processing we can do within a frame.  Adding a caching system will only add
+noise to these measurement.
+
+\subsection{Design}
+
+\subsubsection{Filter Types versus Filter Instances}
+
+Before we explain the design of the prototype, it's worth emphasising the difference between a
+filter \emph{type} and a filter \emph{instance}.
+
+Intuitively, a filter \emph{type} is a generic version of a filter which is waiting for parameters,
+whereas a concrete filter \emph{instance} supplies those parameters.  Therefore, `Gaussian blur',
+`brightness/contrast' and `colour invert' are all filter \emph{types} (and are generic over some
+parameters), whereas `Gaussian blur of radius 10 pixels' is a specific \emph{instance} of the
+`Gaussian blur' \emph{type}.
+
+Mathematically, a filter \emph{type} is a pair $(f, P)$ where $f: P \times \verb|image| \rightarrow
+\verb|image|$ and $P$ is the set of possible parameters for the filter.  Each filter \emph{instance}
+corresponds to a filter type $(f, P)$ and specific parameters $p \in P$.  Therefore, the result of
+applying a filter \emph{instance} $((f, P), p)$ to an image $i$ is $f(p, i)$.
+
+\subsubsection{Overview of Control Flow}
+
+% Conceptually, the design employed by this prototype is very simple (\verb|wgpu|'s verbose API ended
+% up making the actual code quite complicated, but I will spare you the details here.  In a real image
+% editor, I strongly recommend creating a hard abstraction boundary around the code that truly needs to
+% control the GPU and let the majority of the editor work at a higher level of abstraction).
+
+Before processing any images, the code must gain access to a GPU and initialise the shader modules
+for each filter type.  If filter types need any specific GPU resources (like look-up textures),
+these are also allocated here.
+
+To initially load an image, all the referenced textures are read from disk, decompressed and copied
+into GPU memory.  Once the textures are on the GPU, they can be freed from CPU memory.
+
+Now, all the required resources are already on the GPU, so any updates to the image tree only
+requires us to send the GPU a sequence of commands to recompute the new image.  The resulting
+composite image ends up stored in a texture in GPU memory, ready to be rendered to the screen.
+This is the interesting part: determining a suitable sequence of GPU commands is where almost all
+of the complexity lies, so this gets a whole section (Section~\ref{sec:gpu-cmds}) to itself.
+
+If the image needs to saved to a file, then the composite image texture can be copied back into CPU
+memory, encoded and finally written to disk as a file.  Otherwise, the final composite image is left
+as a texture in GPU memory, ready to be rendered to the user's screen in the next frame.
+
+The whole control flow is summarised in Figure~\ref{fig:control-flow}.  Note now all the expensive
+operations, like compiling shaders and copying data between CPU/GPU memory, have been pushed out of
+the `hot' code (updating the image, which could need to be run every frame) and into the `cold' code
+(loading/saving images, which will happen quite rarely).
+
+\begin{figure}
+    \begin{center}
+        \begin{tikzpicture}[node distance=1.5cm]
+            \node (init1) [block] {Get handle to the GPU};
+            \node (init2) [block, below of=init1] {Allocate GPU resources};
+            \node (init3) [block, below of=init2] {Compile shaders for filters};
+            \draw [thick] (init1.north)+(-2.8,0) -- ++(-2.8,-3.8)
+                            node[midway, anchor=east] {Initialisation};
+
+            \node (load1) [block, below of=init3] {Load \& decode layers};
+            \node (load2) [block, below of=load1] {Copy layers to GPU};
+            \draw [thick] (load1.north)+(-2.8,0) -- ++(-2.8,-2.3)
+                            node[midway, anchor=east] {Load Image};
+
+            \node (render1) [block, below of=load2  ] {Create render plan};
+            \node (render2) [block, below of=render1] {Create GPU commands};
+            \node (render3) [block, below of=render2] {Render to GPU texture};
+            \draw [thick] (render1.north)+(-2.8,0) -- ++(-2.8,-3.8)
+                            node[midway, anchor=east] {Render Image};
+
+            \node (save1) [block, below of=render3] {Copy output from GPU};
+            \node (save2) [block, below of=save1] {Encode \& write to disk};
+            \draw [thick] (save1.north)+(-2.8,0) -- ++(-2.8,-2.3)
+                            node[midway, anchor=east] {Save Image};
+
+            \draw [arrow] (init1) -- (init2);
+            \draw [arrow] (init2) -- (init3);
+            \draw [arrow] (init3) -- (load1);
+            \draw [arrow] (load1) -- (load2);
+            \draw [arrow] (load2) -- (render1);
+            \draw [arrow] (render1) -- (render2);
+            \draw [arrow] (render2) -- (render3);
+            \draw [arrow] (render3) -- (save1);
+            \draw [arrow] (save1) -- (save2);
+
+            \draw [arrow] (render3.south)+(0,-0.35) -- +(3,-0.35) -- +(3,2);
+            \draw [thick] (render1.north)+(0,0.35) -- +(3,0.35) -- +(3,-1.9)
+                            node[anchor=west] {every update};
+        \end{tikzpicture}
+    \end{center}
+    \caption{Control flow of the image editor.}\label{fig:control-flow}
+\end{figure}
+
+\subsubsection{Generating GPU commands}\label{sec:gpu-cmds}
+
+The approach taken by this project is heavily inspired by multi-pass compilers: we start with an
+`abstract' tree representing the image, then `lower' this tree into a new tree with more
+annotations, then finally `lower' this intermediate tree again into precise GPU
+commands\footnote{For those familiar with compilers, these correspond (respectively) to the Abstract
+Syntax Tree (AST), an Intermediate Representation (IR) and the final machine code.}.  Compared to
+its abstract counterpart (which is designed to be a nice interface for the user of the library) this
+intermediate tree is both easier to optimise and easier to translate into GPU commands.
+
+In the case of this prototype, the `lowering' of the Abstract Tree to the Intermediate Tree is
+simply a matter of labelling each filter and layer source with what GPU texture it should use, as
+well as a bounding box of the region that we actually need (see Section~\ref{sec:virt-tex-spaces}
+for more about these regions).
+
+\subsubsection{Virtual Texture Spaces}\label{sec:virt-tex-spaces}
+
+When editing images, it is relatively common to encounter a situation where a layer is partially
+outside the boundary of the whole image.  This presents an optimisation opportunity: sometimes we
+only need to process filters for part of a layer, and if we can limit the size of the intermediate
+textures, the processing will be faster because the GPU simply has to do less work.  In fact, there
+are other ways that we can restrict the size of intermediate textures---any filter which throws away
+information (masks, cropping, filling the layer with a solid colour, etc.) can also provide stricter
+bounds for the filters below them.
+
+Additionally, it would improve the consistency of the user experience if we are able to implement
+transformation (translation, rotation, scaling, etc.) as \emph{just another filter}.  This allows
+the user to intuitively create effects like stretching layers after blurring, as well as removing
+layer positioning as a special case for the code to deal with.
+
+It turns out that there's a simple way to achieve both of these: remove the requirement for the
+origin of the intermediate textures to correspond to the origin of the larger layer they're trying
+to represent.  I've dubbed these larger texture spaces `virtual', because the layer coordinates used
+by the filters aren't anchored to any \emph{physical} texture.
+
+This is illustrated in Figure~\ref{fig:virt-tex-space}.  See how the \verb|intermediate| textures
+take up a rectangle in the middle of a larger texture space (in this case, the texture space of the
+output image).  Also, see how the colour invert is only applied to the top-left region of
+\verb|source_texture|, thus saving the GPU work.
+
+\begin{figure}
+    \begin{center}
+        \includegraphics[width=0.9\textwidth]{filter-stacking}
+    \end{center}
+    \caption{Processing image filters using `virtual' texture space.  Note how the $(0, 0)$ points
+    for both \texttt{intermediate} layers fall \emph{outside} the region stored in the
+    texture.  Also note how the virtual texture spaces has allowed us to avoid processing nearly
+    half of the source layer.}\label{fig:virt-tex-space}
+\end{figure}
+
+From the user's perspective, these virtual texture spaces are effectively infinite in every
+direction.  By extension, this means that the user doesn't ever have to worry about layer
+boundaries---the editor will automagically allocate enough texture space to fit the intermediate
+layers.  If the user does somehow manage to create an enormous intermediate texture (e.g. by
+scaling up by 1,000,000x, followed by scaling down by 1,000,000x), we can prevent disaster by
+imposing a maximum intermediate texture size and only storing a very low-resolution version of the
+oversized layer.  It's unlikely that the user would notice the difference, because the output
+image is almost certainly smaller than this intermediate texture.  This means we have to compress
+the data to get the output image, meaning that almost all of the extra information will be removed.
+Anyway, I suspect that every other image editor would crash under such a situation; compared to
+that, a bit of lost quality feels completely acceptable.
+
+\subsubsection{Computing the Required Bounding Boxes}
+
+The final piece of the puzzle is how we actually compute the bounding boxes for every layer.  We do
+this in three passes: in the first, we start with the bounding box of the output image and propagate
+this bounding box \emph{down} the chains of filters.  In the second pass, we start with the bounding box of
+each source layer, and propagate this \emph{up} the chains of filters, until we reach output image
+(which acts as the root of the image tree).  Finally, each layer is assigned the union of these two
+bounding boxes (as in Figure~\ref{fig:bbox-compute}).  If we ever encounter an empty bounding box,
+then everything below it cannot impact the output image and can just be removed from the
+intermediate tree.
+
+\begin{figure}
+    \begin{center}
+        \includegraphics[width=0.9\textwidth]{bbox-compute}
+    \end{center}
+    \caption{Computing the bounding box for an intermediate layer.  In the first pass, the
+    filter/layer above provides a bounding box (rendered in {\color{blue} blue}); in the second, the
+    filter/layer below provides another bounding box (rendered in {\color{red} red}).  The region we
+    have to compute (rendered in {\color{violet} purple}) is bounded by the union of these
+    bounds.}\label{fig:bbox-compute}
+\end{figure}
+
+
+
+
+
+
+\pagebreak
+
+\section{Rogue Diagrams}
+
+\begin{sidewaysfigure}
+        \begin{verbatim}
+Composite Image          Composite Image
+ |                        |(out_texture)
+ |- Layer #2              |- Layer #2               composite:
+ |  |                     |  |(intermediate[0])       intermediate[0] -> out_texture
+ |  |- Invert             |  |- Invert              render pass:
+ |  |                     |  |(intermediate[1])       intermediate[1] -> intermediate[0]
+ |  |- Transform          |  |- Transform           texture copy:
+ |  |                     |  |(intermediate[0])       intermediate[0] -> intermediate[1]
+ |  +- Source Image       |  +- Source Image        texture copy:
+ |                        |    (source texture)       source_texture -> intermediate[0]
+ +- Layer #1              +- Layer #1               composite:
+    |                        |(intermediate[0])       intermediate[0] -> out_texture
+    |- Contrast              |- Contrast            render pass:
+    |                        |(intermediate[1])       intermediate[1] -> intermediate[0]
+    +- Source Image          +- Source Image        texture copy:
+                               (source texture)       source_texture -> intermediate[1]
+                                                    clear: out_texture
+
+
+   `Abstract' Tree          Intermediate Tree          GPU instructions
+                        (annotated with textures)     (ordered bottom up)
+        \end{verbatim}
+    \caption{The `compiler' for GPU commands.  This is so hard to read that I don't think it's
+    useful.}\label{fig:gpu-cmd-gen}
+\end{sidewaysfigure}
+
+
+
+
+
+
+\pagebreak
 
 \section{Measurement Methodology}
 
