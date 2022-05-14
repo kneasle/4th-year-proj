@@ -1,12 +1,16 @@
-use std::time::{Duration, Instant};
+use std::{
+    io::Write,
+    time::{Duration, Instant},
+};
 
 use kneasle_ringing_utils::BigNumInt;
+use rayon::iter::{IndexedParallelIterator, IntoParallelRefMutIterator, ParallelIterator};
 use serde::Serialize;
 use wgpu::util::DeviceExt;
 
 use crate::Context;
 
-const DURATION_PER_TEST: Duration = Duration::from_millis(100);
+const ITERS: u32 = 100;
 
 pub trait TestCase {
     fn name() -> &'static str;
@@ -46,18 +50,16 @@ impl Measurement {
     pub fn new<T: TestCase>(size: u64, ctx: &Context) -> Self {
         let mut case = T::new(ctx, size);
 
-        let (baseline_duration, baseline_iters) = run_partial_case(&mut case, ctx, true);
-        let (full_duration, full_iters) = run_partial_case(&mut case, ctx, false);
+        print!(
+            "{} @ {:>7} ",
+            T::name(),
+            BigNumInt(size as usize).to_string()
+        );
+        let baseline_duration = run_partial_case(&mut case, ctx, true);
+        let full_duration = run_partial_case(&mut case, ctx, false);
 
         let duration = full_duration.saturating_sub(baseline_duration);
-        println!(
-            "{} @ {}: {:?} ({}+{} iters)",
-            T::name(),
-            BigNumInt(size as usize),
-            duration,
-            baseline_iters,
-            full_iters
-        );
+        println!(" {:?}", duration);
         Self {
             size,
             duration_secs: duration.as_secs_f64(),
@@ -66,16 +68,16 @@ impl Measurement {
 }
 
 /// Run either a baseline or full test
-fn run_partial_case(case: &mut impl TestCase, ctx: &Context, is_baseline: bool) -> (Duration, u32) {
+fn run_partial_case(case: &mut impl TestCase, ctx: &Context, is_baseline: bool) -> Duration {
     let start = Instant::now();
-    let mut iters = 0u32;
-    while start.elapsed() < DURATION_PER_TEST {
-        for _ in 0..10 {
-            case.run(ctx, is_baseline);
-            iters += 1;
+    for i in 0..ITERS {
+        case.run(ctx, is_baseline);
+        if i % 20 == 0 {
+            print!(".");
+            std::io::stdout().lock().flush().unwrap();
         }
     }
-    (start.elapsed() / iters, iters)
+    start.elapsed() / ITERS
 }
 
 /// A single byte that we'll fill all the buffers with, set to something that the GPU is very
@@ -184,5 +186,140 @@ impl TestCase for BufCpuToGpu {
         // Block this thread until the GPU operations are finished
         ctx.queue.submit(None); // Make sure that wgpu copies the data
         ctx.device.poll(wgpu::Maintain::Wait);
+    }
+}
+
+///////////////////////
+// CPU-BASED EFFECTS //
+///////////////////////
+
+pub struct CpuInvert {
+    input_buffer: Vec<[u8; 4]>,
+    output_buffer: Vec<[u8; 4]>,
+}
+
+impl TestCase for CpuInvert {
+    fn name() -> &'static str {
+        "CPU invert"
+    }
+
+    fn new(_ctx: &Context, size: u64) -> Self {
+        Self {
+            input_buffer: vec![[0; 4]; size as usize],
+            output_buffer: vec![[0; 4]; size as usize],
+        }
+    }
+
+    fn run(&mut self, _ctx: &Context, is_baseline: bool) {
+        if is_baseline {
+            return;
+        }
+        self.input_buffer
+            .par_iter_mut()
+            .zip(self.output_buffer.par_iter_mut())
+            .for_each(|([r_in, g_in, b_in, a_in], [r_out, g_out, b_out, a_out])| {
+                *r_out = 255 - *r_in;
+                *g_out = 255 - *g_in;
+                *b_out = 255 - *b_in;
+                *a_out = *a_in;
+            });
+    }
+}
+
+pub struct CpuBrightnessContrast {
+    input_buffer: Vec<[f32; 4]>,
+    output_buffer: Vec<[f32; 4]>,
+
+    slant: f32,
+    lighten: f32,
+    darken: f32,
+}
+
+impl TestCase for CpuBrightnessContrast {
+    fn name() -> &'static str {
+        "CPU brightness/contrast (f32)"
+    }
+
+    fn new(_ctx: &Context, size: u64) -> Self {
+        Self {
+            input_buffer: vec![[0.0; 4]; size as usize],
+            output_buffer: vec![[0.0; 4]; size as usize],
+
+            slant: 1.5,
+            darken: 1.0,
+            lighten: 0.5,
+        }
+    }
+
+    fn run(&mut self, _ctx: &Context, is_baseline: bool) {
+        if is_baseline {
+            return;
+        }
+
+        let slant = self.slant;
+        let darken = self.darken;
+        let lighten = self.lighten;
+        self.input_buffer
+            .par_iter_mut()
+            .zip(self.output_buffer.par_iter_mut())
+            .for_each(|([r_in, g_in, b_in, a_in], [r_out, g_out, b_out, a_out])| {
+                let contrasted_r = (*r_in + 0.5) * slant + 0.5;
+                let contrasted_g = (*g_in + 0.5) * slant + 0.5;
+                let contrasted_b = (*b_in + 0.5) * slant + 0.5;
+
+                *r_out = (contrasted_r * darken) * (1.0 - lighten) + lighten;
+                *g_out = (contrasted_g * darken) * (1.0 - lighten) + lighten;
+                *b_out = (contrasted_b * darken) * (1.0 - lighten) + lighten;
+                *a_out = *a_in;
+            });
+    }
+}
+
+pub struct CpuBrightnessContrastBytes {
+    input_buffer: Vec<[u8; 4]>,
+    output_buffer: Vec<[u8; 4]>,
+
+    slant: f32,
+    lighten: f32,
+    darken: f32,
+}
+
+impl TestCase for CpuBrightnessContrastBytes {
+    fn name() -> &'static str {
+        "CPU brightness/contrast (u8)"
+    }
+
+    fn new(_ctx: &Context, size: u64) -> Self {
+        Self {
+            input_buffer: vec![[0; 4]; size as usize],
+            output_buffer: vec![[0; 4]; size as usize],
+
+            slant: 1.5,
+            darken: 1.0,
+            lighten: 0.5,
+        }
+    }
+
+    fn run(&mut self, _ctx: &Context, is_baseline: bool) {
+        if is_baseline {
+            return;
+        }
+
+        let slant = self.slant;
+        let darken = self.darken;
+        let lighten = self.lighten;
+        self.input_buffer
+            .par_iter_mut()
+            .zip(self.output_buffer.par_iter_mut())
+            .for_each(|([r_in, g_in, b_in, a_in], [r_out, g_out, b_out, a_out])| {
+                let contrasted_r = ((*r_in as f32) / 255.0 + 0.5) * slant + 0.5;
+                let contrasted_g = ((*g_in as f32) / 255.0 + 0.5) * slant + 0.5;
+                let contrasted_b = ((*b_in as f32) / 255.0 + 0.5) * slant + 0.5;
+
+                *r_out = (((contrasted_r * darken) * (1.0 - lighten) + lighten) * 255.0) as u8;
+                *g_out = (((contrasted_g * darken) * (1.0 - lighten) + lighten) * 255.0) as u8;
+                *b_out = (((contrasted_b * darken) * (1.0 - lighten) + lighten) * 255.0) as u8;
+                *a_out = *a_in;
+            });
     }
 }

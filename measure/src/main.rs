@@ -13,8 +13,11 @@ fn main() {
     println!("Testing on {}", ctx.adapter_info.name);
     // Run tests
     let mut results = Results::new(&ctx.adapter_info);
-    results.take_measurements::<tests::BufGpuToCpu>(&ctx, 10_000_000, 10_000_000);
-    results.take_measurements::<tests::BufCpuToGpu>(&ctx, 10_000_000, 10_000_000);
+    results.take_measurements::<tests::CpuBrightnessContrastBytes>(&ctx, 1_000_000, 10_000_000);
+    results.take_measurements::<tests::CpuBrightnessContrast>(&ctx, 1_000_000, 10_000_000);
+    results.take_measurements::<tests::CpuInvert>(&ctx, 1_000_000, 10_000_000);
+    results.take_measurements::<tests::BufGpuToCpu>(&ctx, 10_000_000, 100_000_000);
+    results.take_measurements::<tests::BufCpuToGpu>(&ctx, 10_000_000, 100_000_000);
 
     // Save tests to JSON
     let json = serde_json::to_string(&results).unwrap();
