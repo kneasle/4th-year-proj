@@ -1,0 +1,15 @@
+[package]
+name = "measure"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cgmath = "0.18"
+env_logger = "0.9"
+itertools = "0.10"
+kneasle_ringing_utils = "0.1"
+pollster = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+wgpu = "0.12"
+goldilocks-json-fmt = "0.2"
