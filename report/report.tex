@@ -1,13 +1,15 @@
 \documentclass[12pt]{article}
 
 \usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{pgfplots}
 \usepackage{rotating}
 \usepackage{tikz}
-\usepackage{graphicx}
 \usepackage{xcolor}
 
 \usetikzlibrary{shapes.geometric, arrows}
 \graphicspath{ {./images/} }
+\pgfplotsset{width=10cm, compat=1.9}
 
 \tikzstyle{block} = [
     rectangle, rounded corners, minimum width=5cm, minimum height=0.8cm,
@@ -688,6 +690,8 @@ Composite Image          Composite Image
 \section{Measurement Methodology}
 
 \section{Results}
+
+\input{tables.tex}
 
 \section{Conclusion}
 
