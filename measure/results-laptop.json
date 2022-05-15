@@ -1,0 +1,88 @@
+{
+  "gpu_name": "Intel(R) UHD Graphics 620 (KBL GT2)",
+  "backend": "Vulkan",
+  "measurements": {
+    "CPU brightness/contrast (f32)": [
+      { "size": 1000000, "duration_secs": 0.002710234 },
+      { "size": 2000000, "duration_secs": 0.004714895 },
+      { "size": 3000000, "duration_secs": 0.006916804 },
+      { "size": 4000000, "duration_secs": 0.00903517 },
+      { "size": 5000000, "duration_secs": 0.011214299 },
+      { "size": 6000000, "duration_secs": 0.013319807 },
+      { "size": 7000000, "duration_secs": 0.015515522 },
+      { "size": 8000000, "duration_secs": 0.017600633 },
+      { "size": 9000000, "duration_secs": 0.019896787 },
+      { "size": 10000000, "duration_secs": 0.02195434 }
+    ],
+    "CPU brightness/contrast (u8)": [
+      { "size": 1000000, "duration_secs": 0.002731896 },
+      { "size": 2000000, "duration_secs": 0.004968569 },
+      { "size": 3000000, "duration_secs": 0.007209188 },
+      { "size": 4000000, "duration_secs": 0.00935169 },
+      { "size": 5000000, "duration_secs": 0.011587388 },
+      { "size": 6000000, "duration_secs": 0.013802715 },
+      { "size": 7000000, "duration_secs": 0.016012679 },
+      { "size": 8000000, "duration_secs": 0.018552955 },
+      { "size": 9000000, "duration_secs": 0.020885537 },
+      { "size": 10000000, "duration_secs": 0.02324167 }
+    ],
+    "CPU invert": [
+      { "size": 1000000, "duration_secs": 0.000908029 },
+      { "size": 2000000, "duration_secs": 0.001533696 },
+      { "size": 3000000, "duration_secs": 0.002103481 },
+      { "size": 4000000, "duration_secs": 0.002691675 },
+      { "size": 5000000, "duration_secs": 0.003105519 },
+      { "size": 6000000, "duration_secs": 0.003642284 },
+      { "size": 7000000, "duration_secs": 0.004195612 },
+      { "size": 8000000, "duration_secs": 0.004747224 },
+      { "size": 9000000, "duration_secs": 0.005282547 },
+      { "size": 10000000, "duration_secs": 0.00580798 }
+    ],
+    "CPU->GPU buffer copy": [
+      { "size": 10000000, "duration_secs": 0.006550046 },
+      { "size": 20000000, "duration_secs": 0.01269977 },
+      { "size": 30000000, "duration_secs": 0.010922456 },
+      { "size": 40000000, "duration_secs": 0.011728724 },
+      { "size": 50000000, "duration_secs": 0.005445608 },
+      { "size": 60000000, "duration_secs": 0.006159962 },
+      { "size": 70000000, "duration_secs": 0.036085421 },
+      { "size": 80000000, "duration_secs": 0.034196944 },
+      { "size": 90000000, "duration_secs": 0.040106111 },
+      { "size": 100000000, "duration_secs": 0.04153343 }
+    ],
+    "GPU brightness/contrast (compute pass)": [
+      { "size": 1000000, "duration_secs": 0.00090263 },
+      { "size": 2000000, "duration_secs": 0.001581134 },
+      { "size": 3000000, "duration_secs": 0.001918127 },
+      { "size": 4000000, "duration_secs": 0.001746057 },
+      { "size": 5000000, "duration_secs": 0.002744585 },
+      { "size": 6000000, "duration_secs": 0.003352352 },
+      { "size": 7000000, "duration_secs": 0.003446928 },
+      { "size": 8000000, "duration_secs": 0.004363522 }
+    ],
+    "GPU brightness/contrast (render pass)": [
+      { "size": 1000000, "duration_secs": 0.001342608 },
+      { "size": 2000000, "duration_secs": 0.00129489 },
+      { "size": 3000000, "duration_secs": 0.002048952 },
+      { "size": 4000000, "duration_secs": 0.002595637 },
+      { "size": 5000000, "duration_secs": 0.003404302 },
+      { "size": 6000000, "duration_secs": 0.003502676 },
+      { "size": 7000000, "duration_secs": 0.003964135 },
+      { "size": 8000000, "duration_secs": 0.003913262 },
+      { "size": 9000000, "duration_secs": 0.004425537 },
+      { "size": 10000000, "duration_secs": 0.005803582 }
+    ],
+    "GPU->CPU buffer copy": [
+      { "size": 10000000, "duration_secs": 0.000716205 },
+      { "size": 20000000, "duration_secs": 0.00268514 },
+      { "size": 30000000, "duration_secs": 0.002559201 },
+      { "size": 40000000, "duration_secs": 0.013860803 },
+      { "size": 50000000, "duration_secs": 0.017131152 },
+      { "size": 60000000, "duration_secs": 0.020877166 },
+      { "size": 70000000, "duration_secs": 0.023730774 },
+      { "size": 80000000, "duration_secs": 0.02720999 },
+      { "size": 90000000, "duration_secs": 0.030627261 },
+      { "size": 100000000, "duration_secs": 0.034034093 }
+    ]
+  }
+}

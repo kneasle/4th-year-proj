@@ -1,0 +1,52 @@
+{
+  "gpu_name": "NVIDIA GeForce GTX 1060 6GB",
+  "backend": "Vulkan",
+  "measurements": {
+    "CPU brightness/contrast (f32)": [
+      { "size": 1000000, "duration_secs": 0.003470836 },
+      { "size": 2000000, "duration_secs": 0.006538276 },
+      { "size": 3000000, "duration_secs": 0.009472096 },
+      { "size": 4000000, "duration_secs": 0.012551042 },
+      { "size": 5000000, "duration_secs": 0.01552631 },
+      { "size": 6000000, "duration_secs": 0.018667721 },
+      { "size": 7000000, "duration_secs": 0.021782494 },
+      { "size": 8000000, "duration_secs": 0.024883169 },
+      { "size": 9000000, "duration_secs": 0.028192616 },
+      { "size": 10000000, "duration_secs": 0.031860496 }
+    ],
+    "CPU brightness/contrast (u8)": [
+      { "size": 1000000, "duration_secs": 0.003301964 },
+      { "size": 2000000, "duration_secs": 0.006234174 },
+      { "size": 3000000, "duration_secs": 0.009227797 },
+      { "size": 4000000, "duration_secs": 0.012232663 },
+      { "size": 5000000, "duration_secs": 0.01518175 },
+      { "size": 6000000, "duration_secs": 0.018243059 },
+      { "size": 7000000, "duration_secs": 0.021250626 },
+      { "size": 8000000, "duration_secs": 0.024172852 },
+      { "size": 9000000, "duration_secs": 0.027131448 },
+      { "size": 10000000, "duration_secs": 0.030784377 }
+    ],
+    "GPU brightness/contrast (compute pass)": [
+      { "size": 1000000, "duration_secs": 0.000220919 },
+      { "size": 2000000, "duration_secs": 0.000544188 },
+      { "size": 3000000, "duration_secs": 0.000768602 },
+      { "size": 4000000, "duration_secs": 0.000914472 },
+      { "size": 5000000, "duration_secs": 0.001089402 },
+      { "size": 6000000, "duration_secs": 0.001306252 },
+      { "size": 7000000, "duration_secs": 0.00144089 },
+      { "size": 8000000, "duration_secs": 0.001649257 }
+    ],
+    "GPU brightness/contrast (render pass)": [
+      { "size": 1000000, "duration_secs": 0.000144166 },
+      { "size": 2000000, "duration_secs": 0.000216863 },
+      { "size": 3000000, "duration_secs": 0.000252056 },
+      { "size": 4000000, "duration_secs": 0.000294475 },
+      { "size": 5000000, "duration_secs": 0.000344091 },
+      { "size": 6000000, "duration_secs": 0.000395293 },
+      { "size": 7000000, "duration_secs": 0.000385523 },
+      { "size": 8000000, "duration_secs": 0.000481196 },
+      { "size": 9000000, "duration_secs": 0.000532866 },
+      { "size": 10000000, "duration_secs": 0.00057458 }
+    ]
+  }
+}

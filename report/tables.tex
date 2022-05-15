@@ -1,0 +1,61 @@
+
+    \centering
+    \begin{minipage}{0.5\textwidth}
+        \centering
+        \begin{tikzpicture}
+\begin{axis}[
+    width=0.9\textwidth,
+    title={ CPU and GPU compute },
+    xlabel={ Image Size (million pixels) },
+    ylabel={ Average Duration (ms) },
+    xmin=0, xmax=10,
+    ymin=0, ymax=18,
+    xtick={ 0, 2, 4, 6, 8, 10 },
+    ytick={ 0, 2, 4, 6, 8, 10, 12, 14, 16, 18 },
+    legend pos=north west,
+    ymajorgrids=true,
+    grid style=dashed,
+]
+\addplot[color=blue, mark=triangle]
+    coordinates { (1, 0.14930)(2, 0.42887)(3, 0.54195)(4, 0.77742)(5, 0.94439)(6, 1.14563)(7, 1.29275)(8, 1.51197) };
+    \addlegendentry{ GPU compute }
+\addplot[color=blue, mark=square]
+    coordinates { (1, 0.02935)(2, 0.11899)(3, 0.17331)(4, 0.21855)(5, 0.26059)(6, 0.29627)(7, 0.35622)(8, 0.41557)(9, 0.47030)(10, 0.52086) };
+    \addlegendentry{ GPU render }
+\addplot[color=red, mark=triangle]
+    coordinates { (1, 0.54529)(2, 2.36894)(3, 4.40375)(4, 6.34718)(5, 8.26329)(6, 10.23192)(7, 12.09424)(8, 14.00943)(9, 15.87651)(10, 17.77921) };
+    \addlegendentry{ CPU (f32) }
+\addplot[color=red, mark=square]
+    coordinates { (1, 0.90488)(2, 1.66785)(3, 2.42644)(4, 3.24934)(5, 4.00376)(6, 4.76293)(7, 5.57851)(8, 6.27884)(9, 7.03501)(10, 7.86027) };
+    \addlegendentry{ CPU (u8) }
+
+\end{axis}
+\end{tikzpicture}
+    \end{minipage}\hfill
+    \begin{minipage}{0.5\textwidth}
+        \centering
+        \begin{tikzpicture}
+\begin{axis}[
+    width=0.9\textwidth,
+    title={ Just GPU compute },
+    xlabel={ Image Size (million pixels) },
+    ylabel={ Average Duration (ms) },
+    xmin=0, xmax=10,
+    ymin=0, ymax=1.6,
+    xtick={ 0, 2, 4, 6, 8, 10 },
+    ytick={ 0, 0.2, 0.4, 0.6000000000000001, 0.8, 1, 1.2, 1.4, 1.5999999999999999 },
+    legend pos=north west,
+    ymajorgrids=true,
+    grid style=dashed,
+]
+\addplot[color=blue, mark=triangle]
+    coordinates { (1, 0.14930)(2, 0.42887)(3, 0.54195)(4, 0.77742)(5, 0.94439)(6, 1.14563)(7, 1.29275)(8, 1.51197) };
+    \addlegendentry{ GPU compute }
+\addplot[color=blue, mark=square]
+    coordinates { (1, 0.02935)(2, 0.11899)(3, 0.17331)(4, 0.21855)(5, 0.26059)(6, 0.29627)(7, 0.35622)(8, 0.41557)(9, 0.47030)(10, 0.52086) };
+    \addlegendentry{ GPU render }
+
+\end{axis}
+\end{tikzpicture}
+    \end{minipage}
+    

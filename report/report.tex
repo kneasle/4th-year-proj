@@ -214,9 +214,9 @@ passes are useful for doing operations that can't easily be represented as per-p
 like simulations or more complex filters such as Gaussian blur.
 
 However, the generality of compute passes come at a cost: compute passes can't as easily make use of
-the GPU's dedicated hardware for operations like reading/writing to/from textures.  General-purpose
-compute is not the primary purpose of a consumer GPU, so the lower-end or older a GPU gets, the less
-likely it is for compute to work well.
+the GPU's dedicated hardware for operations like sampling textures.  General-purpose compute is not
+the primary purpose of a consumer GPU, so the lower-end or older a GPU gets, the less likely it is
+for compute to work well.
 
 In summary, \emph{compute} passes are much more general, but \emph{render} passes are much more
 portable and often faster.  Therefore, this project reserves compute passes only for filters which
@@ -686,7 +686,10 @@ level of abstraction.
 
 \section{Results}
 
-\input{tables.tex}
+\begin{sidewaysfigure}
+    \input{tables.tex}
+\end{sidewaysfigure}
+
 
 \section{Conclusion}
 

@@ -9,7 +9,21 @@ fn main() {
         "AMD Ryzen 5600X (6x2 cores @ 4.6GHz)",
         "Ubuntu 20.04.4 LTS",
     );
-    let latex = pc.gen_latex_table();
+    let latex = format!(
+        r#"
+    \centering
+    \begin{{minipage}}{{0.5\textwidth}}
+        \centering
+        {}
+    \end{{minipage}}\hfill
+    \begin{{minipage}}{{0.5\textwidth}}
+        \centering
+        {}
+    \end{{minipage}}
+    "#,
+        pc.gen_latex_table(false),
+        pc.gen_latex_table(true)
+    );
     println!("```latex\n{latex}\n```");
     std::fs::write("../report/tables.tex", &latex).unwrap();
 }
@@ -64,8 +78,8 @@ impl Computer {
         }
     }
 
-    fn gen_latex_table(&self) -> String {
-        let lines = [
+    fn gen_latex_table(&self, just_gpu: bool) -> String {
+        let mut lines = vec![
             (
                 "GPU compute",
                 "blue",
@@ -78,15 +92,18 @@ impl Computer {
                 "square",
                 &self.measurements.gpu_render,
             ),
-            ("CPU (f32)", "red", "triangle", &self.measurements.cpu_f32),
-            ("CPU (u8)", "red", "square", &self.measurements.cpu_u8),
         ];
+
+        if !just_gpu {
+            lines.push(("CPU (f32)", "red", "triangle", &self.measurements.cpu_f32));
+            lines.push(("CPU (u8)", "red", "square", &self.measurements.cpu_u8));
+        }
 
         // Compute max size of the diagram
         let mut max_size = 0;
         let mut max_duration = 0.0;
-        for (_name, _col, _mark, pts) in lines {
-            for pt in pts {
+        for (_name, _col, _mark, pts) in &lines {
+            for pt in *pts {
                 max_size = max_size.max(pt.size);
                 if pt.duration_secs > max_duration {
                     max_duration = pt.duration_secs;
@@ -100,7 +117,8 @@ impl Computer {
         let mut latex = format!(
             r#"\begin{{tikzpicture}}
 \begin{{axis}}[
-    % title={{ table.name }},
+    width=0.9\textwidth,
+    title={{ {} }},
     xlabel={{ Image Size ({} pixels) }},
     ylabel={{ Average Duration ({}s) }},
     xmin=0, xmax={},
@@ -111,6 +129,11 @@ impl Computer {
     ymajorgrids=true,
     grid style=dashed,
 ]"#,
+            if just_gpu {
+                "Just GPU compute"
+            } else {
+                "CPU and GPU compute"
+            },
             x_axis.factor_name,
             y_axis.shorthand,
             x_axis.max,
@@ -119,7 +142,7 @@ impl Computer {
             y_axis.tick_string()
         );
 
-        for (name, colour, mark, points) in lines {
+        for (name, colour, mark, points) in &lines {
             let point_str = points
                 .iter()
                 .map(|pt| {
@@ -209,7 +232,7 @@ fn get_tick_step(max_value: f64, ideal_num_steps: f64) -> f64 {
     let mut best_step = 1.0;
     let mut best_num_steps = f64::MAX;
 
-    for power in 0..=3 {
+    for power in -3..=3 {
         for digit in [1.0, 2.0, 5.0] {
             let step = digit * 10.0f64.powi(power);
             let num_steps = max_value / step as f64;
