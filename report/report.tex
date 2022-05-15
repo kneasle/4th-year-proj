@@ -15,6 +15,10 @@
     rectangle, rounded corners, minimum width=5cm, minimum height=0.8cm,
     text centered, draw=black
 ]
+\tikzstyle{hot-block} = [
+    rectangle, rounded corners, minimum width=5cm, minimum height=0.8cm,
+    text centered, draw=black, fill=red!30
+]
 \tikzstyle{arrow} = [thick,->,>=stealth]
 
 \begin{document}
@@ -49,21 +53,25 @@
 This project aims to a prove the concept for a general-purpose, non-destructive, GPU-accelerated
 image editor.
 
-For an image editor to be non-destructive, it must not destroy the source layers.  Therefore, it
-must store every filter separately and recompute them whenever needed.  For the ideal user
-experience, the user should be able to modify the `abstract' image (a tree of filters and layers)
-and have an updated composite image appear on their screen within the next frame so the delay is
-imperceptible.
+An image editor is `general-purpose' if allows the user to create new images by combining other
+images (as `layers'), possibly modifying those layers with `filters' (which provide effects such as
+transformations, blur or colour adjustment).
+
+An image editor is non-destructive if it never destroys the source layers.  Therefore, a
+non-destructive editor must store every filter separately and recompute them whenever needed.  For
+the ideal user experience, the user should be able to modify the `abstract' image (a tree of layers
+and filters) and have an updated composite image appear on their screen within the next frame---thus
+making the delay imperceptible.
 
 Recomputing even parts of an image can be very computationally intensive, and, if we want to target
-60 frames per second, then everything (including rendering the GUI) must happen with a latency of at
-most 16.6ms.
+60 frames per second, then everything---including layout and rendering of the GUI---must happen with
+a latency of at most 16.6ms.
 
-To achieve such low latency and high throughput, I propose running \emph{all} the
-image processing on the GPU---i.e. all the input textures are stored on the GPU, and the final
-output is stored in a GPU texture that can then be drawn to the screen.  All the CPU does here is to
-plan the sequence of commands for the GPU to execute; a task that is hard to implement but fast to
-execute.
+To achieve such low latency and high throughput, I propose running \emph{all} the image processing
+on the user's Graphics Processing Unit (GPU)---i.e. all the input textures are stored on the GPU,
+and the final output is stored in a GPU texture that can then be drawn to the screen.  All the CPU
+does here is to plan the sequence of commands for the GPU to execute; a task that is hard to
+implement but fast to execute.
 
 To determine if this is possible, I have implemented the `core' of an image editor using these
 techniques.  I have then measured the latency of various image setups (TODO: add results).  To help
@@ -91,9 +99,9 @@ these layers (e.g. by moving, rotating, sharpening, adding blur, tweaking colour
 `composite' image.
 
 The ideal user experience for an image editor is one where the editor directly exposes precisely
-this model and, when the user makes changes, instantly updates the composite image in the screen.
+this model and, when the user makes changes, instantly updates the composite image on their screen.
 `Instant' means that the update latency is imperceptible, ideally within 16.6ms so that the new
-image can be rendered in the same frame as the UI updates (assuming 60 frames per second).
+image can be rendered in the same frame as the UI updates (at 60 frames per second).
 
 Existing programs like Adobe Photoshop and Darktable shows us that fully non-destructive editing is
 possible, but recomputing the image within a frame requires an enormous amount of computation.
@@ -116,13 +124,13 @@ TODO: Results
 
 \section{Background}
 
-\subsection{Image Processing 101}
+\subsection{Image Processing}
 
 Image editors will largely be performing one of three types of operation:
 
 \begin{enumerate}
     \item Per-pixel filters, where each pixel in the output is a simple function of either the same
-        pixel in the input (e.g.\ brightness/contrast, hue/saturation/value) or the pixels near it
+        pixel in the input (e.g.\ brightness/contrast, hue/ saturation/value) or the pixels near it
         (e.g.\ pick/hurl noise, edge detect/sharpen, small blurs).
     \item Transformations, where the image is translated, rotated or distorted in some way.
     \item Compositing, where a large number of `layers' are merged to form one final image.  See
@@ -153,7 +161,7 @@ combining horizontal and vertical blur passes, where each row/column is independ
 In a typical consumer computer, there are two main computation units which could be used for
 processing images:
 
-\subsubsection{The Central Processing Unit (CPU)}
+\subsubsection{The Central Processing Unit (CPU)}\label{sec:cpu}
 
 Every computer contains a primary processor (the `Central Processing Unit' or CPU), which is
 optimised for performing general computations on relatively small amounts of data.  There is some
@@ -162,17 +170,17 @@ rather than high parallelism.
 
 Because of this, it's obvious that the CPU is a pretty inappropriate device for image processing.
 The saving grace is that CPUs tend to have extremely high clock speeds and some degree of
-parallelism: with multiple cores and SIMD, can perform upwards of 32 individual operations in
-parallel at roughly 3GHz\footnote{According to Steam's Hardware Survey, CPUs have an average of 4.9
-cores, as of April 2022, and almost all can perform 256-bit Single Instruction Multiple Data (SIMD)
-instructions.  So, 32 parallel operations can be achieved if 4 cores are each performing operations
-on eight 32-bit floating-point SIMD lanes in a 256-bit AVX register.  However, limitations like
-memory speed and the sharing of functional units (thus causing logically different threads to
-contest for the same hardware) make this theoretical limit very difficult to reach in practice.}.
-This is fast enough that CPU-based processing is \emph{passable} but the latency and throughput are
-both far from ideal.  Additionally, maxing out a computer's CPU tends to have a detrimental impact
-on other threads running on the same machine---including other parts of the image editor, like the
-GUI thread.
+parallelism: with multiple cores and SIMD, a modern CPU can be expected to perform upwards of 32
+individual operations in parallel at roughly 3GHz\footnote{According to Steam's Hardware Survey,
+CPUs have an average of 4.9 cores, as of April 2022, and almost all can perform 256-bit Single
+Instruction Multiple Data (SIMD) instructions.  So, 32 parallel operations can be achieved if 4
+cores are each performing operations on eight 32-bit floating-point SIMD lanes in a 256-bit AVX
+register.  However, limitations like memory speed and the sharing of functional units (thus causing
+logically different threads to contest for the same hardware) make this theoretical limit very
+difficult to reach in practice.}.  This is fast enough that CPU-based processing is \emph{passable}
+but the latency and throughput are both far from ideal.  Additionally, maxing out a computer's CPU
+tends to have a detrimental impact on other threads running on the same machine---including other
+parts of the image editor, like the GUI thread.
 
 \subsubsection{The Graphics Processing Unit (GPU)}\label{sec:gpu}
 
@@ -186,7 +194,7 @@ only recently been the case---over the last two decades, rising screen resolutio
 rates made dedicated graphics processing go from exclusive to gaming to being ubiquitous in consumer
 devices.
 
-GPUs have two major processing modes:
+GPUs have two major processing modes, \emph{render} and \emph{compute} passes:
 
 \paragraph{Render passes:} Typically, a render pass involves taking 3D geometry, applying some
 arbitrary transformation to the vertices, then performing some computation on every pixel of the
@@ -198,13 +206,21 @@ Also, GPUs very often have custom hardware to make rendering as fast as possible
 To summarise, render passes are limited in the computation they can perform, but are extremely fast
 and portable.  
 
-\paragraph{Compute passes:} More recently, the raw power of GPUs has made people want to use them as
-general purpose computing devices.  Any highly parallel tasks are very well suited to GPU
-acceleration, including machine learning and (in our case) image processing.  Therefore, recent GPUs
-can run arbitrary code on the same cores that would be used for rendering.  This has given rise to
-General Purpose GPU (GPGPU) computing, which heavily utilises this ability.  Compute passes are
-useful for doing operations that can't easily be represented as per-pixel operations, like
-simulations or more complex filters such as Gaussian blur.
+\paragraph{Compute passes:} Apart from the 3D rendering focussed render passes, modern GPUs also
+allow execution of arbitrary code using \emph{compute passes}.  This is the basis for General
+Purpose GPU (GPGPU) computing, and is largely driven by computationally demanding but highly
+parallel tasks such as training neural networks.  Within the context of image editing, compute
+passes are useful for doing operations that can't easily be represented as per-pixel operations,
+like simulations or more complex filters such as Gaussian blur.
+
+However, the generality of compute passes come at a cost: compute passes can't as easily make use of
+the GPU's dedicated hardware for operations like reading/writing to/from textures.  General-purpose
+compute is not the primary purpose of a consumer GPU, so the lower-end or older a GPU gets, the less
+likely it is for compute to work well.
+
+In summary, \emph{compute} passes are much more general, but \emph{render} passes are much more
+portable and often faster.  Therefore, this project reserves compute passes only for filters which
+absolutely need it (such as Gaussian blur).
 
 \subsection{Comparison of Compute APIs}
 
@@ -214,8 +230,9 @@ Computing images on the CPU is extremely simple, requiring no extra effort or cl
 images are loaded from disk into the CPU's memory as a flat array of pixel values.  Operations can
 then be performed on those pixels using a plain \verb|for| loop.  Parallelisation can be achieved
 using a combination of SIMD and multi-threading (splitting the pixels into chunks and having
-different CPU cores process those chunks in parallel).  As described above, CPUs are easy to program
-for but, on the whole, are ill-suited to the heavily parallel operations found in image processing.
+different CPU cores process those chunks in parallel).  As described above in Section~\ref{sec:cpu},
+CPUs are easy to program for but, on the whole, are ill-suited to the heavily parallel operations
+found in image processing.
 
 \subsubsection{Graphics Libraries}
 
@@ -422,7 +439,19 @@ boost.
 
 For example, think about the user dragging a slider in a filter.  This will cause the image to
 update nearly every frame, but all these updates will always change the same filter.  Therefore,
-each frame the editor only has to recompute the filters on the path from the change to the root.
+each frame the editor only has to recompute the filters on the path from the change to the root,
+which will always be faster than recomputing the entire image from scratch.
+
+The major downside of caching is the memory usage it requires.  However, a quick sanity check tells
+us that this is unlikely to be a problem: firstly, the image editor is \emph{already} storing a lot
+of textures in the GPU's memory (one for every source image, one for the final image and at least
+two intermediate textures) so the relative impact of a few extra cache textures is less significant
+than it first appears.  Secondly, and most importantly, GPUs are designed to handle lots of
+textures.  Each pixel takes four bytes, and images are likely to be around 2,000~$\times$~1,000
+pixels.  Naively storing such a texture would take at most 4~$\times$~2,000~$\times$~1,000 bytes =
+8MB.  Even humble integrated GPUs usually have at least 1GB of RAM, which is enough to store several
+hundred such textures.  Even this is an underestimate, because GPUs store compressed versions of the
+textures and use dedicated hardware to decompress them as needed.
 
 Whilst extremely effective, introducing caching makes the whole system substantially more complex.
 It also doesn't make the performance any easier to evaluate---we are principally interested in
@@ -468,8 +497,8 @@ into GPU memory.  Once the textures are on the GPU, they can be freed from CPU m
 Now, all the required resources are already on the GPU, so any updates to the image tree only
 requires us to send the GPU a sequence of commands to recompute the new image.  The resulting
 composite image ends up stored in a texture in GPU memory, ready to be rendered to the screen.
-Determining a suitable sequence of GPU commands is where almost all of the complexity lies, so this
-gets Section~\ref{sec:gpu-cmds} to itself.
+Determining a suitable sequence of GPU commands is where almost all of the complexity lies, and is
+explained in detail in Section~\ref{sec:gpu-cmds}.
 
 If the image needs to saved to a file, then the composite image texture can be copied back into CPU
 memory, encoded and finally written to disk as a file.  Otherwise, the final composite image is left
@@ -494,9 +523,9 @@ the `hot' code (updating the image, which could need to be run every frame) and 
             \draw [thick] (load1.north)+(-2.8,0) -- ++(-2.8,-2.3)
                             node[midway, anchor=east] {Load Image};
 
-            \node (render1) [block, below of=load2  ] {Create render plan};
-            \node (render2) [block, below of=render1] {Create GPU commands};
-            \node (render3) [block, below of=render2] {Render to GPU texture};
+            \node (render1) [hot-block, below of=load2  ] {Create render plan};
+            \node (render2) [hot-block, below of=render1] {Create GPU commands};
+            \node (render3) [hot-block, below of=render2] {Render to GPU texture};
             \draw [thick] (render1.north)+(-2.8,0) -- ++(-2.8,-3.8)
                             node[midway, anchor=east] {Render Image};
 
@@ -520,7 +549,10 @@ the `hot' code (updating the image, which could need to be run every frame) and 
                             node[anchor=west] {every update};
         \end{tikzpicture}
     \end{center}
-    \caption{Control flow of the image editor.}\label{fig:control-flow}
+    \caption{Control flow of the image editor.  Note how only the {\color{red} red} blocks are
+    contained with a loop; they are run every time the user makes a change to the image.  Thus,
+    nearly all the editor's time will be spent in this loop, and it is always advantageous to move
+    work out of the loop.}\label{fig:control-flow}
 \end{figure}
 
 \subsubsection{Generating GPU commands}\label{sec:gpu-cmds}
@@ -540,7 +572,7 @@ well as a bounding box of the region that we actually need (see Section~\ref{sec
 for more about these regions).
 
 Finally, once we know what regions of which textures to use, generating the GPU commands becomes
-fairly simple: every filter type exposes an function with signature like
+fairly simple: every filter type exposes a function with signature like
 
 \begin{verbatim}
 trait FilterType {
@@ -554,17 +586,20 @@ trait FilterType {
 }
 \end{verbatim}
 
-For those not familiar with Rust, this declares a \verb|trait| containing a function with four
-arguments: \verb|&self| is equivalent to the \verb|self| parameter in Python or \verb|this| in
-object-oriented languages.  \verb|&self| is immutable, as opposed to \verb|&mut self| which would be
-mutable.  \verb|in| and \verb|out| are two \verb|TextureRegion|s specifying the regions of virtual
-and actual texture space on either side of the effect.  Finally, \verb|command_encoder| is a
-\emph{mutable} reference to a \verb|wgpu::CommandEncoder|, to which the render/compute passes should
-be added.
+This declares a \verb|trait| containing a function with four arguments: \verb|&self| is equivalent
+to the \verb|self| parameter in Python or \verb|this| in object-oriented languages.  \verb|&self|
+means that \verb|self| is \emph{immutable}, as opposed to \verb|&mut self| which would be mutable.
+\verb|in| and \verb|out| are two \verb|TextureRegion|s specifying the regions of virtual and actual
+texture space on either side of the effect.  Finally, \verb|command_encoder| is a \emph{mutable}
+reference to a \verb|wgpu::CommandEncoder|, to which the render/compute passes should be added.
 
 For per-pixel effects, this simply requires rendering a single quad that covers the correct region
 of the output layer.  Getting the various coordinates (the quad's vertices and texture coordinates)
 right is fiddly but not difficult.
+
+More complex filters, such as transformations or blurs, require special treatment, but this design
+means they can each be implemented in isolation.  Additionally, the \verb|TextureRegion|s provide
+the filters with all the information required to correctly sample the incoming textures.
 
 \subsubsection{Virtual Texture Spaces}\label{sec:virt-tex-spaces}
 
@@ -605,13 +640,12 @@ From the user's perspective, these virtual texture spaces are effectively infini
 direction.  By extension, this means that the user doesn't ever have to worry about layer
 boundaries---the editor will automagically allocate enough texture space to fit the intermediate
 layers.  If the user does somehow manage to create an enormous intermediate texture (e.g. by
-scaling up by 1,000,000x, followed by scaling down by 1,000,000x), we can prevent disaster by
-imposing a maximum intermediate texture size and only storing a very low-resolution version of the
-oversized layer.  It's unlikely that the user would notice the difference, because the output
-image is almost certainly smaller than this intermediate texture.  This means we have to compress
-the data to get the output image, meaning that almost all of the extra information will be removed.
-Anyway, I suspect that every other image editor would crash under such a situation; compared to
-that, a bit of lost quality feels completely acceptable.
+scaling up by 1,000,000x, followed by scaling down by 1,000,000x), we can avert disaster by imposing
+a maximum intermediate texture size and only storing a very low-resolution version of the oversized
+layer.  It's unlikely that the user would notice the difference, because the output image almost
+certainly contains less information than this intermediate texture---meaning that much of the extra
+information has to be compressed out.  Possible quality loss is much better than running out of
+memory and crashing, which is what Photoshop and GIMP would do in the same situation.
 
 \subsubsection{Computing the Required Bounding Boxes}
 
@@ -620,9 +654,9 @@ this in three passes: in the first, we start with the bounding box of the output
 this bounding box \emph{down} the chains of filters.  In the second pass, we start with the bounding box of
 each source layer, and propagate this \emph{up} the chains of filters, until we reach output image
 (which acts as the root of the image tree).  Finally, each layer is assigned the union of these two
-bounding boxes (as in Figure~\ref{fig:bbox-compute}).  If we ever encounter an empty bounding box,
-then everything below it cannot impact the output image and can just be removed from the
-intermediate tree.
+bounding boxes (as in Figure~\ref{fig:bbox-compute}).  If the bounding boxes are disjoint, then no
+information can be transferred and all of the computation below that layer cannot affect the result
+and can simply be skipped.
 
 \begin{figure}
     \begin{center}
@@ -637,51 +671,12 @@ intermediate tree.
 
 \subsection{Final Notes}
 
-Conceptually, the design employed by this prototype is quite simple, but \verb|wgpu|'s verbose API
-meant that the actual code ended up pretty large and complex.  In a real image editor, I strongly
-recommend creating a hard abstraction boundary around the code that truly needs to control the GPU
-and let the majority of the editor work at a higher level of abstraction.
-
-
-
-
-
-
-
-\pagebreak
-
-\section{Rogue Diagrams}
-
-\begin{sidewaysfigure}
-        \begin{verbatim}
-Composite Image          Composite Image
- |                        |(out_texture)
- |- Layer #2              |- Layer #2               composite:
- |  |                     |  |(intermediate[0])       intermediate[0] -> out_texture
- |  |- Invert             |  |- Invert              render pass:
- |  |                     |  |(intermediate[1])       intermediate[1] -> intermediate[0]
- |  |- Transform          |  |- Transform           texture copy:
- |  |                     |  |(intermediate[0])       intermediate[0] -> intermediate[1]
- |  +- Source Image       |  +- Source Image        texture copy:
- |                        |    (source texture)       source_texture -> intermediate[0]
- +- Layer #1              +- Layer #1               composite:
-    |                        |(intermediate[0])       intermediate[0] -> out_texture
-    |- Contrast              |- Contrast            render pass:
-    |                        |(intermediate[1])       intermediate[1] -> intermediate[0]
-    +- Source Image          +- Source Image        texture copy:
-                               (source texture)       source_texture -> intermediate[1]
-                                                    clear: out_texture
-
-
-   `Abstract' Tree          Intermediate Tree          GPU instructions
-                        (annotated with textures)     (ordered bottom up)
-        \end{verbatim}
-    \caption{The `compiler' for GPU commands.  This is so hard to read that I don't think it's
-    useful.}\label{fig:gpu-cmd-gen}
-\end{sidewaysfigure}
-
-
-
+Conceptually, the design employed by this prototype is relatively simple, but \verb|wgpu|'s verbose
+API meant that the actual code ended up being surprisingly large and complex (requiring about 1300
+source lines of code, most of which is just calling \verb|wgpu|'s API).  This complexity appears to
+be unavoidable so, in a real image editor, I strongly recommend creating a hard abstraction boundary
+around the code that truly needs control of the GPU and let the rest of the editor work at a higher
+level of abstraction.
 
 
 
