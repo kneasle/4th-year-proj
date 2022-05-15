@@ -100,7 +100,7 @@ def get_ticks_and_max(max_val):
     i = 0
     while True:
         ticks.append(i)
-        if i > max_val:
+        if i >= max_val:
             return ",".join([str(t) for t in ticks]), i
         i += step
 
