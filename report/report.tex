@@ -156,7 +156,7 @@ combining horizontal and vertical blur passes, where each row/column is independ
 
 
 
-\subsection{Methods of Processing Images}
+\subsection{Methods of Processing Images}\label{sec:compute-types}
 
 In a typical consumer computer, there are two main computation units which could be used for
 processing images:
@@ -682,14 +682,127 @@ level of abstraction.
 
 \pagebreak
 
-\section{Measurement Methodology}
+\section{Comparison of Processing Speed}
 
-\section{Results}
+\subsection{Methodology}
+
+In this section, we aim to provide a performance comparison between the three ways images can be
+processed: CPU, GPU compute passes and GPU render passes (see Section~\ref{sec:compute-types}).  In
+order to provide a fair comparison, all tests are running exactly the same implementation algorithm
+for adjusting the brightness/contrast of images.  The render pass version is exactly the same as
+that used by this project.  Brightness/contrast was chosen because it makes a balance between
+trivial to compute (e.g.\ inverting colours) and being very complex to compute (e.g.\ Gaussian
+blur).  It is also indicative of image editing at large: the average image modification involves
+lots of simple operations like compositing and colour adjustments, but very few complex operations
+such as blurs.
+
+Each device/compute combination was tested on various sizes of images, from 1 mega-pixel to 10
+mega-pixels.  All the images have a height of 1000 pixels, and change their width to achieve the
+desired size.  GPU compute passes store pixels as a flat array of 32-bit floats, whereas GPU render
+passes use 8-bit textures, sampled as floats between 0 and 1.  To keep the comparison fair, the CPU
+is measured twice: once storing the images as 32-bit floats (\verb|f32|) and the other as 8-bit
+(unsigned) integers (\verb|u8|).  GPU compute stops at 8 mega-pixels, because any larger images
+exceed \verb|wgpu|'s maximum buffer size.  CPU code is compiled for maximum compatibility (as would
+be done in a proper image editor) but are fully multi-threaded, taking advantage of as many cores as
+are available.
+
+Measuring GPU operations is non-trivial, because GPUs are very asynchronous; the CPU-side function
+that sends commands to the GPU returns immediately, so in order to get accurate measurements we must
+\emph{force} the CPU to block and wait for the GPU to finish executing.
+
+Additionally, we want to only measure the speed of brightness/contrast, without including any other
+overhead from interacting with the GPU.  To achieve this, each test is run twice: once for the full
+test, and once as a `control' (i.e.\ do everything in the full test \emph{except} the actual
+processing).  The control and full tests are both run 100 times for every data-point, with the
+values in the graph being the differences of the two averages.  All test cases are run from a single
+Rust program, which handles all of these rules.
+
+\subsubsection{Devices Tested}
+
+There are two general types of computer used for image editing; desktops and laptops.  These have
+very different performance characteristics: desktop computers prioritise performance over power
+efficiency (favouring faster but power hungry processors like dedicated graphics cards), whereas
+laptops must be very careful about energy consumption since batteries with large capacity are heavy
+and expensive.
+
+\begin{figure}
+    \begin{center}
+        \begin{tabular}{ r | c | l }
+                & Laptop & Desktop \\
+            \hline
+            CPU & Intel i7-8550U      & AMD Ryzen 5600X \\
+            Cores/Clock & 8 cores, at 4GHz & 12 cores, at 4.6GHz \\
+            CPU memory & 8GB & 16GB \\
+            \hline
+            GPU & Intel UHD Graphics 620 & Nvidia GTX 1060 \\
+            GPU memory & 1.5GB (shared with CPU) & 6GB (dedicated) \\
+            \hline
+            OS & Arch Linux & Ubuntu 20.04 \\
+            \hline
+        \end{tabular}
+    \end{center}
+    \caption{Comparison of the laptop and desktop computers used for
+    testing.}\label{fig:test-computers}
+\end{figure}
+
+Figure~\ref{fig:test-computers} gives a comparison of the two computers tested.  Both are
+medium-range computers but are optimised for compiling code rather than graphics, so their CPUs are
+much more high-end than their corresponding GPUs.  Therefore, if there is any skew in the results,
+it will favour the CPU operations.
+
+To reduce measurement interference, both computers were running no other programs while the tests
+were running (except a terminal emulator and a tiling window manager, which are practically
+unavoidable).  Both computers have unmodified performance settings, as would be representative for
+an image editor.
+
+\subsection{Results}
 
 \begin{sidewaysfigure}
-    \input{tables.tex}
+    \input{tables-pc.tex}
+    \caption{Time required to adjust brightness/contrast on a mid-range desktop computer, containing
+    a 12-core 4.6GHz AMD Ryzen 5600X, 16GB of RAM and an Nvidia GTX 1060 (6GB) for the
+    GPU.}\label{fig:pc-results}
 \end{sidewaysfigure}
 
+\begin{sidewaysfigure}
+    \input{tables-laptop.tex}
+    \caption{Time required to adjust brightness/contrast on a mid-range laptop computer, containing
+    an 8-core 4.0GHz Intel i7-8550U, 8GB of RAM and integrated graphics for the
+    GPU.}\label{fig:laptop-results}
+\end{sidewaysfigure}
+
+The results are plotted in Figures~\ref{fig:pc-results} and \ref{fig:laptop-results} (for desktop
+and laptop, respectively).  All four tests are shown on the left hand graph, while the right hand
+graph shows a zoomed version of just the GPU's results.  
+
+\subsubsection{Comparisons}
+
+In both cases, the GPU is substantially faster than the CPU.  For normal image sizes (2-3
+mega-pixels), GPU render passes are 3.6x or 28.7x (laptop or desktop, respectively) faster than the
+fastest CPU operations.
+
+Considering just GPU operations, render passes are roughly 3x faster than compute on the desktop,
+but are the same speed on the laptop.  It would appear that the laptop's GPU is being throttled,
+either to reduce heat or to preserve battery life, and this is preventing the GPU from running at
+its full capacity.  It is entirely possible to disable throttling on a laptop, but a production
+image editor has to use the computer it is given, with whatever configuration it is in.
+Additionally, disabling throttling will have a disastrous effect on battery life, which is very
+undesirable.
+
+Finally, the desktop's dedicated GPU appears to be roughly 7x faster than the integrated GPU in the
+laptop.  This is unsurprising given the difference in design requirements (optimising for raw
+performance or power efficiency).
+
+\subsubsection{Interpretation}
+
+An image editor targeting 60 frames per second has at most 16.6ms to perform both the image
+processing and the GUI rendering.  Therefore, the vital question is: \emph{how much image processing
+can we do within a frame?}  The more processing is possible within a frame, the larger the image a
+user can edit before the editor starts having a noticeable delay.
+
+
+
+\pagebreak
 
 \section{Conclusion}
 

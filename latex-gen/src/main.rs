@@ -4,11 +4,22 @@ use itertools::Itertools;
 use serde::Deserialize;
 
 fn main() {
-    let pc = Computer::new(
-        "../measure/results.json",
+    gen_latex(
+        "../measure/results-pc.json",
         "AMD Ryzen 5600X (6x2 cores @ 4.6GHz)",
         "Ubuntu 20.04.4 LTS",
+        "pc",
     );
+    gen_latex(
+        "../measure/results-laptop.json",
+        "Intel i7-8550U (4x2 cores @ 4.0GHz)",
+        "Arch Linux (kernel 5.17.1)",
+        "laptop",
+    );
+}
+
+fn gen_latex(json_path: &str, cpu_name: &str, os_name: &str, name: &str) {
+    let pc = Computer::new(json_path, cpu_name, os_name);
     let latex = format!(
         r#"
     \centering
@@ -25,7 +36,7 @@ fn main() {
         pc.gen_latex_table(true)
     );
     println!("```latex\n{latex}\n```");
-    std::fs::write("../report/tables.tex", &latex).unwrap();
+    std::fs::write(&format!("../report/tables-{name}.tex"), &latex).unwrap();
 }
 
 #[derive(Debug)]

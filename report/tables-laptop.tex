@@ -1,0 +1,61 @@
+
+    \centering
+    \begin{minipage}{0.5\textwidth}
+        \centering
+        \begin{tikzpicture}
+\begin{axis}[
+    width=0.9\textwidth,
+    title={ CPU and GPU compute },
+    xlabel={ Image Size (million pixels) },
+    ylabel={ Average Duration (ms) },
+    xmin=0, xmax=10,
+    ymin=0, ymax=25,
+    xtick={ 0, 2, 4, 6, 8, 10 },
+    ytick={ 0, 5, 10, 15, 20, 25 },
+    legend pos=north west,
+    ymajorgrids=true,
+    grid style=dashed,
+]
+\addplot[color=blue, mark=triangle]
+    coordinates { (1, 0.90263)(2, 1.58113)(3, 1.91813)(4, 1.74606)(5, 2.74458)(6, 3.35235)(7, 3.44693)(8, 4.36352) };
+    \addlegendentry{ GPU compute }
+\addplot[color=blue, mark=square]
+    coordinates { (1, 1.34261)(2, 1.29489)(3, 2.04895)(4, 2.59564)(5, 3.40430)(6, 3.50268)(7, 3.96413)(8, 3.91326)(9, 4.42554)(10, 5.80358) };
+    \addlegendentry{ GPU render }
+\addplot[color=red, mark=triangle]
+    coordinates { (1, 2.71023)(2, 4.71490)(3, 6.91680)(4, 9.03517)(5, 11.21430)(6, 13.31981)(7, 15.51552)(8, 17.60063)(9, 19.89679)(10, 21.95434) };
+    \addlegendentry{ CPU (f32) }
+\addplot[color=red, mark=square]
+    coordinates { (1, 2.73190)(2, 4.96857)(3, 7.20919)(4, 9.35169)(5, 11.58739)(6, 13.80271)(7, 16.01268)(8, 18.55296)(9, 20.88554)(10, 23.24167) };
+    \addlegendentry{ CPU (u8) }
+
+\end{axis}
+\end{tikzpicture}
+    \end{minipage}\hfill
+    \begin{minipage}{0.5\textwidth}
+        \centering
+        \begin{tikzpicture}
+\begin{axis}[
+    width=0.9\textwidth,
+    title={ Just GPU compute },
+    xlabel={ Image Size (million pixels) },
+    ylabel={ Average Duration (ms) },
+    xmin=0, xmax=10,
+    ymin=0, ymax=6,
+    xtick={ 0, 2, 4, 6, 8, 10 },
+    ytick={ 0, 1, 2, 3, 4, 5, 6 },
+    legend pos=north west,
+    ymajorgrids=true,
+    grid style=dashed,
+]
+\addplot[color=blue, mark=triangle]
+    coordinates { (1, 0.90263)(2, 1.58113)(3, 1.91813)(4, 1.74606)(5, 2.74458)(6, 3.35235)(7, 3.44693)(8, 4.36352) };
+    \addlegendentry{ GPU compute }
+\addplot[color=blue, mark=square]
+    coordinates { (1, 1.34261)(2, 1.29489)(3, 2.04895)(4, 2.59564)(5, 3.40430)(6, 3.50268)(7, 3.96413)(8, 3.91326)(9, 4.42554)(10, 5.80358) };
+    \addlegendentry{ GPU render }
+
+\end{axis}
+\end{tikzpicture}
+    \end{minipage}
+    
