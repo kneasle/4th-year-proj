@@ -46,42 +46,6 @@
 
 
 
-\begin{center}
-    \large \textbf{Abstract}
-\end{center}
-
-This project aims to a prove the concept for a general-purpose, non-destructive, GPU-accelerated
-image editor.
-
-An image editor is `general-purpose' if allows the user to create new images by combining other
-images (as `layers'), possibly modifying those layers with `filters' (which provide effects such as
-transformations, blur or colour adjustment).
-
-An image editor is non-destructive if it never destroys the source layers.  Therefore, a
-non-destructive editor must store every filter separately and recompute them whenever needed.  For
-the ideal user experience, the user should be able to modify the `abstract' image (a tree of layers
-and filters) and have an updated composite image appear on their screen within the next frame---thus
-making the delay imperceptible.
-
-Recomputing even parts of an image can be very computationally intensive, and, if we want to target
-60 frames per second, then everything---including layout and rendering of the GUI---must happen with
-a latency of at most 16.6ms.
-
-To achieve such low latency and high throughput, I propose running \emph{all} the image processing
-on the user's Graphics Processing Unit (GPU)---i.e. all the input textures are stored on the GPU,
-and the final output is stored in a GPU texture that can then be drawn to the screen.  All the CPU
-does here is to plan the sequence of commands for the GPU to execute; a task that is hard to
-implement but fast to execute.
-
-To determine if this is possible, I have implemented the `core' of an image editor using these
-techniques.  I have then measured the latency of various image setups (TODO: add results).  To help
-others building GPU-powered editors, I have also made accurate measurements of the latency and
-throughput of various GPU operations.  (TODO: add results)
-
-TODO: add conclusion, once I have results
-
-
-
 \pagebreak
 
 \tableofcontents
@@ -92,37 +56,89 @@ TODO: add conclusion, once I have results
 
 \section{Introduction}
 
-When image editing, the user's mental model of an edited image corresponds to a sequence of layers,
-where each layer can be passed through any number of `filters', which are operations which modify
-these layers (e.g. by moving, rotating, sharpening, adding blur, tweaking colours, etc.).  The
-`filtered' version of the layers are finally merged (or `composited') together to form the final
-`composite' image.
+When image editing, the user's mental model of an edited image corresponds roughly to a sequence of
+layers, where each layer can be passed through any number of `filters', which are operations which
+modify these layers (e.g. by moving, rotating, sharpening, adding blur, tweaking colours, etc.).
+The `filtered' versions of these layers are finally merged (or `composited') together to form the
+final `composite' image that the user sees.
 
-The ideal user experience for an image editor is one where the editor directly exposes precisely
-this model and, when the user makes changes, instantly updates the composite image on their screen.
-`Instant' means that the update latency is imperceptible, ideally within 16.6ms so that the new
-image can be rendered in the same frame as the UI updates (at 60 frames per second).
+The ideal user experience for an image editor is one where the editor exposes precisely this model
+and, when the user makes changes, instantly updates the composite image on their screen.  `Instant'
+means that the update latency is imperceptible, ideally within 16.6ms so that the new image can be
+rendered in the same frame as the GUI is updated (at 60 frames per second).
 
-Existing programs like Adobe Photoshop and Darktable shows us that fully non-destructive editing is
-possible, but recomputing the image within a frame requires an enormous amount of computation.
-Fortunately, almost all modern consumer computers contain extremely capable graphics processing
-units (GPUs), which are designed to be extremely fast at highly parallel workloads such as image
-processing.  Therefore, I propose running \emph{all} of the compute work on the same GPU that drives
-the user's display.
+In Section~\ref{sec:compute-types}, we discuss the differences between the two most common types of
+processor in modern computers: a Central Processing Unit (CPU) which is very fast and
+flexible and designed for sequential tasks, and a Graphics Processing Unit (GPU) which is designed
+specifically to be extremely fast at 2D and 3D graphics and other highly parallel tasks.  As this
+report will show, implementing purely non-destructive editing with low enough latency is nearly
+impossible without using the GPU for acceleration.
 
-This project aims to determine the feasibility of such a fully non-destructive, fully
-GPU-accelerated image editor.  To do so, I have implemented a simple `core' of an image editor, and
-used this to measure the latency of full GPU processing.  There are many further optimisations that
-could be done, but they will not change the performance enough to change the feasibility result
-(TODO: Update this once I actually have results).
+Existing programs like Adobe Photoshop and Darktable have already implemented non-destructive
+editing and/or GPU acceleration in some capacity, but no existing program exposes this mental model
+very well: extensive use of non-destructive editing in Photoshop both slows the program down
+significantly and bloats the file size (and as such, full non-destructive editing is not
+recommended).   Darktable has both non-destructive editing and GPU acceleration but has only a
+fixed pipeline for adjusting photographs.  More details can be found in
+Section~\ref{sec:existing-editors}.
 
-TODO: Results
+In this project, we determine the feasibility of exploiting graphics acceleration to provide the
+computation power required to update arbitrary image in less than a 60th of a second.  We will do
+this in two parts:
+
+Firstly, in Section~\ref{sec:implementation}, the `core' of an image editor was successfully
+designed and implemented, suggesting that a fully-nondestructive GPU-accelerated image editor is
+indeed possible---though quite fiddly---to implement.  Designing and implementing a full image
+editor is well beyond the scope of this project, so the `core' subset of the possible features
+(exact details in Section~\ref{sec:omissions}) was chosen to allow us to prove the concept's
+soundness, without getting overwhelmed by the design and implementation details of a full image
+editor.
+
+Secondly, in Section~\ref{sec:measurements}, we compare the speed of image processing across
+different computing strategies and devices, to show that GPUs are fast enough to get close to 60
+frames per second, even on portable devices such as laptops.  Even with a fairly naive
+implementation, discrete GPUs can manage 60fps for relatively small images.  If unchanging parts of
+the image are cached, then discrete GPUs are easily capable of 60fps for even very large images.
+Portable devices like laptops are, predictably, much less powerful and---even with aggressive use of
+caching---will likely drop to 30fps when editing larger files (this is likely acceptable, since
+30fps is still fairly smooth and anyone who seriously wants a smooth image editing experience will
+not be doing so on a mid- to low-end laptop).
+
+In conclusion, this project has successfully proved the feasibility of using GPU acceleration
+to create a low-latency, non-destructive image editor.  But having a proof-of-concept is very far
+from having a fully-featured, user-friendly image editor, and, as discussed in
+Section~\ref{sec:next-steps}, there is much work yet to be done.  A full conclusion is in
+Section~\ref{sec:conclusion}.
 
 
 
 \pagebreak
 
 \section{Background}
+
+\subsection{Terminology}
+
+\subsubsection{Filter Types versus Filter Instances}
+
+Intuitively, a filter \emph{type} is a generic version of a filter which is waiting for parameters,
+whereas a concrete filter \emph{instance} supplies those parameters.  Therefore, `Gaussian blur',
+`brightness/contrast' and `colour invert' are all filter \emph{types} (and are generic over some
+parameters), whereas `Gaussian blur of radius 10 pixels' is a specific \emph{instance} of the
+`Gaussian blur' \emph{type}.
+
+Mathematically, a filter \emph{type} is a pair $(f, P)$ where $f: P \times \verb|image| \rightarrow
+\verb|image|$ and $P$ is the set of possible parameters for the filter.  Each filter \emph{instance}
+corresponds to a filter type $(f, P)$ and specific parameters $p \in P$.  Therefore, the result of
+applying a filter \emph{instance} $((f, P), p)$ to an image $i$ is $f(p, i)$.
+
+\subsubsection{Intermediate Textures versus Intermediate Layers}
+
+In this project, there is a distinction between layers and textures: a texture is a concrete and
+finite piece of data stored in the GPU's memory, while a layer is a conceptually infinite image.
+
+Often, a layer will contain an image in some region and have transparency off to infinity in every
+direction.  The unbounded nature of layers makes them impossible to compute directly, so instead we
+store a finite \emph{region} of the layer in a texture.
 
 \subsection{Image Processing}
 
@@ -158,8 +174,8 @@ combining horizontal and vertical blur passes, where each row/column is independ
 
 \subsection{Methods of Processing Images}\label{sec:compute-types}
 
-In a typical consumer computer, there are two main computation units which could be used for
-processing images:
+In a typical consumer computer, there are two main processors which could be used for processing
+images:
 
 \subsubsection{The Central Processing Unit (CPU)}\label{sec:cpu}
 
@@ -171,16 +187,16 @@ rather than high parallelism.
 Because of this, it's obvious that the CPU is a pretty inappropriate device for image processing.
 The saving grace is that CPUs tend to have extremely high clock speeds and some degree of
 parallelism: with multiple cores and SIMD, a modern CPU can be expected to perform upwards of 32
-individual operations in parallel at roughly 3GHz\footnote{According to Steam's Hardware Survey,
-CPUs have an average of 4.9 cores, as of April 2022, and almost all can perform 256-bit Single
-Instruction Multiple Data (SIMD) instructions.  So, 32 parallel operations can be achieved if 4
-cores are each performing operations on eight 32-bit floating-point SIMD lanes in a 256-bit AVX
-register.  However, limitations like memory speed and the sharing of functional units (thus causing
-logically different threads to contest for the same hardware) make this theoretical limit very
-difficult to reach in practice.}.  This is fast enough that CPU-based processing is \emph{passable}
-but the latency and throughput are both far from ideal.  Additionally, maxing out a computer's CPU
-tends to have a detrimental impact on other threads running on the same machine---including other
-parts of the image editor, like the GUI thread.
+individual operations in parallel at roughly 3GHz\footnote{As of April 2022, CPUs have an average of
+4.9 cores and almost all can perform 256-bit Single Instruction Multiple Data (SIMD) instructions.
+So, 32 parallel operations can be achieved if 4 cores are each performing operations on eight 32-bit
+floating-point SIMD lanes in a 256-bit AVX register.  However, limitations like memory speed and the
+sharing of functional units (thus causing logically different threads to contest for the same
+hardware) make this theoretical limit very difficult to reach in practice.  Data sourced from
+Steam's Hardware Survey.}.  This is fast enough that CPU-based processing is \emph{passable} but the
+latency and throughput are both far from ideal.  Additionally, maxing out a computer's CPU tends to
+have a detrimental impact on other threads running on the same machine---including other parts of
+the image editor, like the GUI thread.
 
 \subsubsection{The Graphics Processing Unit (GPU)}\label{sec:gpu}
 
@@ -202,9 +218,6 @@ screen to compute its colour.  This is what GPUs are primarily designed for (it'
 and is therefore GPUs have had many decades of optimisation relating to rendering efficiently.
 Because rendering is a GPU's primary purpose, it means that render passes are available on any GPU.
 Also, GPUs very often have custom hardware to make rendering as fast as possible.
-
-To summarise, render passes are limited in the computation they can perform, but are extremely fast
-and portable.  
 
 \paragraph{Compute passes:} Apart from the 3D rendering focussed render passes, modern GPUs also
 allow execution of arbitrary code using \emph{compute passes}.  This is the basis for General
@@ -238,19 +251,19 @@ found in image processing.
 
 Controlling GPUs directly is an task, since you would be forced to deal with the differences between
 every model of GPU.  To combat this, operating systems vendors (like Apple and Microsoft) or the
-Khronos Group\footnote{https://www.khronos.org/} design APIs which provide users with a simpler
+Khronos Group \cite{khronos} design APIs which provide users with a simpler
 abstraction for the GPU, and require that GPU vendors implement this standard API in each GPU's
 drivers.
 
-The oldest and most well-known graphics API is OpenGL\footnote{https://www.opengl.org/}, first
+The oldest and most well-known graphics API is OpenGL \cite{opengl}, first
 released in in 1992 by the Khronos Group.  OpenGL is very high-level, which makes it easy to use for
 simple cases (like making games) but lacks the low-level control required for achieving high
 performance in more obscure cases (like image editors).
 
-Armed with 24 years of hindsight, Khronos released Vulkan\footnote{https://www.vulkan.org/} in 2016
+Armed with 24 years of hindsight, Khronos released Vulkan \cite{vulkan} in 2016
 as a successor to OpenGL.  Meanwhile, Apple and Microsoft released
-Metal\footnote{https://developer.apple.com/metal/} and
-DirectX\footnote{https://en.wikipedia.org/wiki/DirectX}, respectively.  All of these modern APIs
+Metal \cite{metal} and
+DirectX \cite{directx}, respectively.  All of these modern APIs
 favour a lower-level approach, requiring more code from their users but allowing much more
 fine-grained control and potential for much better performance.
 
@@ -258,9 +271,9 @@ Until 2018, OpenGL and Vulkan where fully supported by all major operating syste
 Linux, iOS and Android).  In 2018, Apple announced that they would be deprecating OpenGL (along with
 Vulkan and OpenCL) to encourage developers to use Metal.  As of 2022, OpenGL, Vulkan and OpenCL all
 still work on Apple devices, but it is unclear for how long this will continue.  Code using Vulkan
-can be used on Apple devices by using MoltenVK\footnote{https://github.com/KhronosGroup/MoltenVK} to
+can be used on Apple devices by using MoltenVK \cite{moltenvk} to
 translate Vulkan function calls into Metal at runtime.  Similarly,
-MoltenGL\footnote{https://moltengl.com/moltengl/} provides support for OpenGL, but both of these
+MoltenGL \cite{moltengl} provides support for OpenGL, but both of these
 only implement a subset of their corresponding APIs and are less than ideal.  The compatibility of
 various APIs, along with OpenCL (discussed in Section~\ref{sec:open-cl}) and WebGPU (discussed in
 Section~\ref{sec:wgpu}), is summarised in Figure~\ref{fig:apis-vs-oses}.
@@ -285,7 +298,7 @@ Section~\ref{sec:wgpu}), is summarised in Figure~\ref{fig:apis-vs-oses}.
 
 \subsubsection{OpenCL}\label{sec:open-cl}
 
-OpenCL\footnote{https://www.khronos.org/opencl/} (not to be confused with Open\textbf{G}L) is a
+OpenCL \cite{opencl} (not to be confused with Open\textbf{G}L) is a
 framework for running general compute operations on any hardware, also designed by the Khronos
 Group.  OpenCL lets you write parallelisable C or C++ code once, then delegate that code to any
 compute device (be that a CPU, GPU or anything else) at runtime.  Thus, the compute code only needs
@@ -302,11 +315,11 @@ compared to render passes.
 
 \subsubsection{WebGPU}\label{sec:wgpu}
 
-WebGPU\footnote{https://www.w3.org/TR/webgpu/} is an in-progress standard to provide web
+WebGPU \cite{webgpu} is an in-progress standard to provide web
 applications with low-level but safe access to general-purpose GPU acceleration.  WebGPU feels very
 similar to Vulkan, and delegates to Vulkan, Metal or DirectX.  Therefore, WebGPU is extremely
 portable, at the cost of not implementing some parts of Vulkan.  A Rust library,
-\verb|wgpu|\footnote{https://github.com/gfx-rs/wgpu}, implements the WebGPU specification in a way
+\verb|wgpu| \cite{wgpu}, implements the WebGPU specification in a way
 callable from native language like C, C++ and Rust.  \verb|wgpu| forms the core of Firefox's WebGPU
 implementation, and is therefore very well-tested and stable.
 
@@ -314,33 +327,31 @@ implementation, and is therefore very well-tested and stable.
 
 \pagebreak
 
-\section{State of the Art} % TODO: Should I call this 'Existing Editors'
+\section{State of the Art}\label{sec:existing-editors}
 
 \subsection{Adobe Photoshop}
 
 I don't think Photoshop needs much of an introduction, since it has a near monopoly over image
 editing---to the point where its name is synonymous with image editing itself.  To give an idea of
 just how dominant Photoshop is, it has an estimated 26 million users
-world-wide\footnote{https://prodesigntools.com/number-of-creative-cloud-subscribers.html}, including
+world-wide \cite{photoshop-users}, including
 90\% of the world's creative
-professionals\footnote{https://www.adobe.com/about-adobe/fast-facts.html}.
+professionals \cite{adobe-facts}.
 
 \subsubsection{Non-Destructive Editing}
 
-Since the introduction of Smart
-Objects\footnote{https://helpx.adobe.com/photoshop/using/create-smart-objects.html} (and the
-corresponding Smart Filters) in 2014, Photoshop has been able to implement most filters
-non-destructively.  These are all computed on the CPU, though, so extensive use of Smart Filters
-will often cause Photoshop to become noticeably slow.
+Since the introduction of Smart Objects \cite{smart-obj} (and the corresponding Smart Filters) in
+2014, Photoshop has been able to implement most filters non-destructively.  These are all computed
+on the CPU, though, so extensive use of Smart Filters will often cause Photoshop to become
+noticeably slow.
 
 \subsubsection{GPU Acceleration}
 
 Photoshop runs almost all of its image processing on the CPU.  As of 2022, nine operations benefit
-from GPU acceleration, whilst a further eight \emph{require} a
-GPU\footnote{https://helpx.adobe.com/photoshop/kb/photoshop-cc-gpu-card-faq.html}.  It makes sense
-that the Photoshop is not built with GPUs in mind---the first version of Photoshop was released in
-1990\footnote{https://en.wikipedia.org/wiki/Adobe\_Photoshop}, nine years before the first consumer
-GPU (Nvidia's GeForce 256) reached the market\footnote{https://en.wikipedia.org/wiki/GeForce\_256}.
+from GPU acceleration, whilst a further eight \emph{require} a GPU \cite{photoshop-gpu}.  It makes
+sense that the Photoshop is not built with GPUs in mind---the first version of Photoshop was
+released in 1990 \cite{photoshop-wiki}, nine years before the first consumer GPU (Nvidia's GeForce
+256) reached the market \cite{first-gpu}.
 
 Without access to Photoshop's source code, it's unclear exactly what APIs are being used this
 GPU-acceleration.  Photoshop has settings for OpenCL, OpenGL, Vulkan and Metal, so I can only assume
@@ -349,27 +360,25 @@ small amount of GPU compute passes and GPU rendering passes.
 
 \subsection{GNU Image Manipulation Program (GIMP)}
 
-The GNU Image Manipulation Program\footnote{https://gimp.org} (shortened to GIMP) is a free and open
+The GNU Image Manipulation Program \cite{gimp} (shortened to GIMP) is a free and open
 source general-purpose image editor.  It has largely dominated the space of free image editing.
 
 \subsubsection{Non-Destructive Editing}
 
 As of 2022, all filters in GIMP are destructive, so there is no way to do non-destructive editing.
-There is a plan to implement non-destructive
-editing\footnote{https://www.gimp.org/docs/userfaq.html\#when-will-gimp-support-any-kind-of-non-destructive-editing-like-adjustment-layers-layer-filters-andor-full-blown-node-based-editing}
-but that has not yet come to fruition.  It appears that GIMP's code is not written with
-non-destructive editing in mind, and the addition appears to be a monumental refactoring task.
+There is a plan to implement non-destructive editing \cite{gimp-faq} but that has not yet come to
+fruition.  It appears that GIMP's code is not written with non-destructive editing in mind, and the
+addition appears to be a monumental refactoring task.  
 
 \subsubsection{GPU Acceleration}
 
-GIMP has experimental support for GPU acceleration via OpenCL (first released in
-2.10.0\footnote{https://www.gimp.org/news/2018/04/27/gimp-2-10-0-released/} in April 2018).  As of
-2022, this is still experimental and is sometimes slower than CPU-based processing.  So, for most
-users, GIMP is 100\% CPU-bound.
+GIMP has experimental support for GPU acceleration via OpenCL (first released in 2.10.0
+\cite{gimp-2.10} in April 2018).  As of 2022, this is still experimental and is sometimes slower
+than CPU-based processing.  So, for most users, GIMP is 100\% CPU-bound.
 
 \subsection{Darktable}
 
-Darktable\footnote{https://www.darktable.org/} is an open source `photography workflow application'
+Darktable \cite{darktable} is an open source `photography workflow application'
 which features non-destructive editing which can be performed entirely on the GPU.  The only thing
 really missing is that Darktable only supports a fixed pipeline of filters, rather than allowing the
 user to choose how to compose them (this makes sense, because Darktable is only intended to be used
@@ -381,7 +390,7 @@ portability improvements from using render passes.
 
 \pagebreak
 
-\section{Implementation}
+\section{Implementation}\label{sec:implementation}
 
 \subsection{Technologies Used}
 
@@ -397,26 +406,24 @@ potentially have been easier, but the prototype doesn't need any complex shader 
 \verb|wgpu|'s tutorials use WGSL so that's what I learned.
 
 Finally, this report is written in \LaTeX\ and the 3D diagrams were made using a combination of
-Blender\footnote{https://www.blender.org/} and GIMP.
+Blender \cite{blender} and GIMP \cite{gimp}.
 
-\subsection{Notable Omissions}
+\subsection{Notable Omissions}\label{sec:omissions}
 
-This project is concerned with \emph{proving a concept} rather than with building a viable image
-editor, so, as such, I have chosen not to implement many features that would be expected of a real
-image editor but would not change the feasibility of a fully GPU-accelerated image editor.  Here, I
-will quickly justify a few obvious omissions:
+This project is concerned with \emph{proving a concept} rather than with building a production-ready
+image editor.  So, as such, many features that would be expected of a real image editor have been
+omitted, since they would not change the feasibility of a fully GPU-accelerated image editor.  This
+section highlights the largest of those omitted features.
 
 \subsubsection{Gaussian Blur and Other Blurs}
 
-Running Gaussian blur efficiently on GPUs has been very thoroughly
-researched\footnote{https://venturebeat.com/2017/07/13/an-investigation-of-fast-real-time-gpu-based-image-blur-algorithms/}
+Running Gaussian blur efficiently on GPUs has been very thoroughly researched \cite{fast-blur}
 because of the applications in video games (for filters like bloom and depth of field) and GUIs and
 the best algorithms, while slower than simple per-pixel filters, are very fast.  Approximation
-techniques such as Kawase blur and Dual
-blur\footnote{https://community.arm.com/cfs-file/\_\_key/communityserver-blogs-components-weblogfiles/00-00-00-20-66/siggraph2015\_2D00\_mmg\_2D00\_marius\_2D00\_notes.pdf}
-give accurate results very quickly (though they are still approximations).  Other blur-like
-operations (bloom, motion blur, glare, etc.) are also prevalent in video games and Kawase blur can
-also be used to compute these efficiently.
+techniques such as Kawase blur and Dual blur \cite{kawase-blur} give accurate results very quickly
+(though they are still approximations).  Other blur-like operations (bloom, motion blur, glare,
+etc.) are also prevalent in video games and Kawase blur can also be used to compute these
+efficiently.  
 
 \subsubsection{Brushes and Undo/Redo}
 
@@ -459,31 +466,6 @@ It also doesn't make the performance any easier to evaluate---we are principally
 noise to these measurement.
 
 \subsection{Design}
-
-\subsubsection{Filter Types versus Filter Instances}
-
-Before we explain the design of the prototype, it's worth emphasising the difference between a
-filter \emph{type} and a filter \emph{instance}.
-
-Intuitively, a filter \emph{type} is a generic version of a filter which is waiting for parameters,
-whereas a concrete filter \emph{instance} supplies those parameters.  Therefore, `Gaussian blur',
-`brightness/contrast' and `colour invert' are all filter \emph{types} (and are generic over some
-parameters), whereas `Gaussian blur of radius 10 pixels' is a specific \emph{instance} of the
-`Gaussian blur' \emph{type}.
-
-Mathematically, a filter \emph{type} is a pair $(f, P)$ where $f: P \times \verb|image| \rightarrow
-\verb|image|$ and $P$ is the set of possible parameters for the filter.  Each filter \emph{instance}
-corresponds to a filter type $(f, P)$ and specific parameters $p \in P$.  Therefore, the result of
-applying a filter \emph{instance} $((f, P), p)$ to an image $i$ is $f(p, i)$.
-
-\subsubsection{Intermediate Textures versus Intermediate Layers}
-
-In this project, there is a distinction between layers and textures: a texture is a concrete and
-finite piece of data stored in the GPU's memory, while a layer is a conceptually infinite image.
-
-Often, a layer will contain an image in some region and have transparency off to infinity in every
-direction.  The unbounded nature of layers makes them impossible to compute directly, so instead we
-store a finite \emph{region} of the layer in a texture.
 
 \subsubsection{Lifetime of the Image Editor}
 
@@ -682,7 +664,7 @@ level of abstraction.
 
 \pagebreak
 
-\section{Comparison of Processing Speed}
+\section{Comparison of Processing Speed}\label{sec:measurements}
 
 \subsection{Methodology}
 
@@ -747,8 +729,8 @@ and expensive.
 
 Figure~\ref{fig:test-computers} gives a comparison of the two computers tested.  Both are
 medium-range computers but are optimised for compiling code rather than graphics, so their CPUs are
-much more high-end than their corresponding GPUs.  Therefore, if there is any skew in the results,
-it will favour the CPU operations.
+much more high-end than their corresponding GPUs.  Therefore, if there is any bias in the results,
+it will be in favour of the CPU operations.
 
 To reduce measurement interference, both computers were running no other programs while the tests
 were running (except a terminal emulator and a tiling window manager, which are practically
@@ -800,17 +782,73 @@ processing and the GUI rendering.  Therefore, the vital question is: \emph{how m
 can we do within a frame?}  The more processing is possible within a frame, the larger the image a
 user can edit before the editor starts having a noticeable delay.
 
+In order to get some concrete numbers, let us assume that 10ms of the 16.6ms frame budget can be
+given to image editing.  This seems reasonable; drawing a GUI is likely to be significantly faster
+than the image processing, and the GUI layout can be run in parallel with the image processing.
+Generating the GPU commands takes well under a millisecond, which is largely negligible compared to
+the image processing.  We could possibly budget more than 10ms, but having a buffer of a few
+milliseconds is useful so that any unexpected delays don't cause frames to be dropped.
+
+There are two main image sizes of note: images of up to 2 mega-pixels are very common (1920
+$\times$ 1080 is `High Definition'), and very few images exceed 8 mega-pixels (the standard `4k'
+resolution is 3840 $\times$ 2160).
+
+The dedicated GPU takes roughly 0.2ms and 0.5ms for 2 and 8 mega-pixel images (respectively).
+Therefore, on a desktop with dedicated graphics, we can comfortably perform 20 to 50 GPU operations
+within a frame.
+
+Laptops are, as expected, much more limited, taking roughly 1.1ms and 4ms for 2 and 8 mega-pixel
+images (respectively).  1ms gives around 10 operations per frame, which is likely enough for most
+cases.  4ms gives us just over 2 operations per frame, which is very limiting.  If users do edit 4k
+images on a mid-range laptop, they should probably expect a maximum 30 frames per second.
+
 
 
 \pagebreak
 
-\section{Conclusion}
+\section{Conclusion}\label{sec:conclusion}
+
+\subsection{Next Steps}\label{sec:next-steps}
 
 
 
 \pagebreak
 
 \begin{thebibliography}{99}
+
+    \bibitem{khronos} The Khronos Group. \emph{https://www.khronos.org/}
+    \bibitem{opengl} Open Graphics Library (OpenGL). \emph{https://www.opengl.org/}
+    \bibitem{vulkan} Vulkan API. \emph{https://www.vulkan.org/}
+    \bibitem{metal} Metal Graphics API. \emph{https://developer.apple.com/metal/}
+    \bibitem{directx} DirectX Graphics API (Wikipedia). \\
+        \emph{https://en.wikipedia.org/wiki/DirectX}
+    \bibitem{moltenvk} MoltenVK (GitHub). \emph{https://github.com/KhronosGroup/MoltenVK}
+    \bibitem{moltengl} MoltenGL (GitHub). \emph{https://moltengl.com/moltengl/}
+    \bibitem{opencl} Open Compute Language (OpenCL). \emph{https://www.khronos.org/opencl/}
+    \bibitem{webgpu} WebGPU specification. \emph{https://www.w3.org/TR/webgpu/}
+    \bibitem{wgpu} \verb|wgpu| repository. \emph{https://github.com/gfx-rs/wgpu}
+    \bibitem{photoshop-users} Photoshop's estimated user numbers. \\
+        \emph{https://prodesigntools.com/number-of-creative-cloud-subscribers.html}
+    \bibitem{adobe-facts} Adobe fast facts. \emph{https://www.adobe.com/about-adobe/fast-facts.html}
+    \bibitem{smart-obj} Smart Objects (Photoshop). \\
+        \emph{https://helpx.adobe.com/photoshop/using/create-smart-objects.html}
+    \bibitem{photoshop-gpu} Vulkan API. \\
+        \emph{https://helpx.adobe.com/photoshop/kb/photoshop-cc-gpu-card-faq.html}
+    \bibitem{photoshop-wiki} Adobe Photoshop (Wikipedia). \\
+        \emph{https://en.wikipedia.org/wiki/Adobe\_Photoshop}
+    \bibitem{first-gpu} GeForce 256 (first consumer GPU). \\
+        \emph{https://en.wikipedia.org/wiki/GeForce\_256}
+    \bibitem{gimp} The GNU Image Manipulation Program. \emph{https://gimp.org}
+    \bibitem{gimp-faq} GIMP FAQ. \emph{https://www.gimp.org/docs/userfaq.html}
+    \bibitem{gimp-2.10} GIMP 2.10 release notes. \\
+        \emph{https://www.gimp.org/news/2018/04/27/gimp-2-10-0-released/}
+    \bibitem{darktable} Darktable. \emph{https://www.darktable.org/}
+    \bibitem{blender} Blender. \emph{https://www.blender.org/}
+    \bibitem{fast-blur} Fast GPU blur algorithms (VentureBeat). \\
+        \emph{https://venturebeat.com/2017/07/13/an-investigation-of-fast-real-time-gpu-based-image-blur-algorithms/}
+    \bibitem{kawase-blur} Kawase and Dual blur filters. \\
+        \emph{https://community.arm.com/cfs-file/\_\_key/communityserver-blogs-components-weblogfiles/00-00-00-20-66/siggraph2015\_2D00\_mmg\_2D00\_marius\_2D00\_notes.pdf}
+
 \end{thebibliography}
 
 \end{document}
