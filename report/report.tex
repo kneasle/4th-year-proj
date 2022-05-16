@@ -6,6 +6,7 @@
 \usepackage{rotating}
 \usepackage{tikz}
 \usepackage{xcolor}
+\usepackage{setspace}
 
 \usetikzlibrary{shapes.geometric, arrows}
 \graphicspath{ {./images/} }
@@ -51,6 +52,8 @@
 \tableofcontents
 
 
+
+\doublespacing
 
 \pagebreak
 
@@ -808,7 +811,67 @@ images on a mid-range laptop, they should probably expect a maximum 30 frames pe
 
 \section{Conclusion}\label{sec:conclusion}
 
+\subsection{This Project}
+
+This project set out to determine the feasibility of using GPU-acceleration to create a
+non-destructive image editor, where the update latency is low enough that, upon each update to the
+model, a new processed image is ready by the time the next frame gets drawn.  To target 60 frames
+per second, an image editor must have a new frame ready every 16.6ms, putting a tight time limit on
+the image processing.
+
+Determining the feasibility boils down to answering two questions:
+
+\begin{enumerate}
+    \item Is it feasible to design such an editor without huge amounts of complexity?
+    \item Are consumer GPUs fast enough to perform this much computation with low enough latency?
+\end{enumerate}
+
+To answer (1), a prototype for the `core' of an image editor was designed and implemented, as
+described in Section~\ref{sec:implementation}.  This prototype can process images (specified
+according to the model of layers and filters) and, whilst the implementation process involved a lot
+of fiddly GPU access, the resulting design is conceptually relatively simple.  Additionally, it
+seems that much, if not all, of the GPU-related complexity can be encapsulated into one component of
+a larger image editor, thus containing the complexity.
+
+To answer (2), we measured the performance of processing the same image filter (brightness/contrast)
+using several different processing methods (as described in Section~\ref{sec:compute-types}) and
+across different devices, as described in Section~\ref{sec:measurements}.  This also concluded
+positively, with discrete GPUs being easily fast enough and integrated GPUs in laptops being fast
+enough that, with some strategic caching of intermediate layers, the overall editor will still run
+smoothly.
+
+Personally, I consider this project to be success in its goals.  We do not have the ideal image
+editor yet, but this project has shown that it is indeed very likely to be possible.
+
 \subsection{Next Steps}\label{sec:next-steps}
+
+There are many other parts of building a GPU-accelerated, non-destructive image editor that
+haven't been covered by this project.  All of the omissions described in Section~\ref{sec:omissions}
+need to be covered, but most of these are implementation details which simply add complexity to the
+implementation without needing any design work.  Three obvious areas that need more design work are
+undo/redo, masks and brushes.
+
+\subsubsection{Undo/Redo}
+
+GPU-accelerated undo/redo requires us to be able to switch between different versions of the same
+layer texture.  The naive approach would be to store a texture containing a full copy of each
+version of the changed texture, but this consumes wildly more space than needed.  A proper undo/redo
+system needs a way to only store the parts of texture that actually changed, but in such a way that
+texture versions can be recovered efficiently.
+
+\subsubsection{Masks}
+
+Masks are not difficult to implement, but they don't immediately incorporate cleanly into the image
+model we've given, because they are a filter that takes \emph{two} source layers as input.
+Additionally, one of these is a grey-scale layer, which requires all effects to handle different
+colour layouts.
+
+\subsubsection{Brushes}
+
+Brushes are a requirement for any image editor, but they are inherently destructive since they
+paint over the contents of the layer.  Therefore, a design decision has to be made on how to
+incorporate them into the non-destructive model.  In theory, each brush-stroke could create its own
+new layer, which would be fully non-destructive but extremely unwieldy in practice.
 
 
 
